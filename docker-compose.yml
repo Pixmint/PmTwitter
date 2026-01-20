@@ -1,0 +1,11 @@
+﻿services:
+  pmtwitter:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    tmpfs:
+      - /tmp
+    read_only: true
+    restart: unless-stopped
