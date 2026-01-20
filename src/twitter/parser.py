@@ -1,263 +1,237 @@
-﻿import json
+import json
 import re
+import logging
 from datetime import datetime
-from email.utils import parsedate_to_datetime
-
+from typing import Optional
 from bs4 import BeautifulSoup
+from src.twitter.models import Tweet, TweetStats, MediaItem, QuotedTweet, Poll, PollOption
 
-from twitter.models import MediaItem, PollData, PollOption, TweetData
+logger = logging.getLogger(__name__)
 
-
-def _parse_datetime(value: str | None) -> datetime | None:
-    if not value:
+def parse_number(text: Optional[str]) -> Optional[int]:
+    """Парсит число из текста (поддерживает K, M)"""
+    if not text:
         return None
+    
+    text = text.strip().upper().replace(',', '').replace(' ', '')
+    
+    multipliers = {'K': 1000, 'M': 1000000, 'B': 1000000000}
+    
+    for suffix, mult in multipliers.items():
+        if suffix in text:
+            try:
+                num = float(text.replace(suffix, ''))
+                return int(num * mult)
+            except ValueError:
+                return None
+    
     try:
-        if value.endswith("Z"):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return datetime.fromisoformat(value)
+        return int(text)
     except ValueError:
-        try:
-            return parsedate_to_datetime(value)
-        except Exception:  # noqa: BLE001
-            return None
-
-
-def _find_json_objects(soup: BeautifulSoup) -> list[object]:
-    items: list[object] = []
-    for script in soup.find_all("script"):
-        if not script.string:
-            continue
-        content = script.string.strip()
-        if not content:
-            continue
-        if content.startswith("{") or content.startswith("["):
-            try:
-                items.append(json.loads(content))
-            except json.JSONDecodeError:
-                continue
-        if "__NEXT_DATA__" in script.get("id", ""):
-            try:
-                items.append(json.loads(content))
-            except json.JSONDecodeError:
-                continue
-    return items
-
-
-def _deep_find(data: object, predicate) -> list[dict]:
-    matches: list[dict] = []
-    if isinstance(data, dict):
-        if predicate(data):
-            matches.append(data)
-        for value in data.values():
-            matches.extend(_deep_find(value, predicate))
-    elif isinstance(data, list):
-        for item in data:
-            matches.extend(_deep_find(item, predicate))
-    return matches
-
-
-def _extract_poll(poll_data: dict | None) -> PollData | None:
-    if not poll_data:
         return None
-    options = [
-        PollOption(
-            text=o.get("label") or o.get("text") or "",
-            percent=o.get("percentage"),
-            votes=o.get("votes"),
-        )
-        for o in poll_data.get("options", [])
+
+def parse_date(date_str: Optional[str]) -> Optional[datetime]:
+    """Парсит дату из различных форматов"""
+    if not date_str:
+        return None
+    
+    formats = [
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d %H:%M:%S",
+        "%d.%m.%Y %H:%M",
     ]
-    return PollData(
-        question=poll_data.get("question") or "",
-        options=options,
-        total_votes=poll_data.get("totalVotes") or poll_data.get("total_votes"),
-        time_left=poll_data.get("timeLeft") or poll_data.get("time_left"),
-        status=poll_data.get("status"),
-    )
-
-
-def _tweet_from_dict(cand: dict) -> TweetData:
-    text = cand.get("full_text") or cand.get("text") or ""
-    user = cand.get("user") or {}
-    display = user.get("name") or cand.get("author", {}).get("name") or "—"
-    username = user.get("screen_name") or user.get("username") or "—"
-    created = cand.get("created_at") or cand.get("createdAt") or cand.get("date")
-    created_at = _parse_datetime(created)
-
-    media: list[MediaItem] = []
-    media_items = cand.get("media") or cand.get("extended_entities", {}).get("media") or []
-    for item in media_items:
-        media_url = item.get("media_url_https") or item.get("url") or item.get("media_url")
-        media_type = item.get("type") or "photo"
-        if media_url:
-            media.append(MediaItem(url=media_url, type=media_type))
-
-    replies = cand.get("reply_count") or cand.get("replies") or cand.get("replyCount")
-    reposts = cand.get("retweet_count") or cand.get("reposts") or cand.get("repostCount")
-    likes = cand.get("favorite_count") or cand.get("likes") or cand.get("likeCount")
-    views = cand.get("view_count") or cand.get("views") or cand.get("viewCount")
-
-    poll = _extract_poll(cand.get("poll") or cand.get("pollData"))
-
-    quoted = None
-    quoted_raw = (
-        cand.get("quoted_status")
-        or cand.get("quotedStatus")
-        or cand.get("quotedTweet")
-        or cand.get("quoted_status_result")
-    )
-    if isinstance(quoted_raw, dict):
-        quoted = _tweet_from_dict(quoted_raw.get("result") or quoted_raw)
-
-    return TweetData(
-        display_name=str(display),
-        username=str(username).lstrip("@"),
-        tweet_url=cand.get("url") or "",
-        created_at=created_at,
-        text=text,
-        media=media,
-        replies=str(replies) if replies is not None else None,
-        reposts=str(reposts) if reposts is not None else None,
-        likes=str(likes) if likes is not None else None,
-        views=str(views) if views is not None else None,
-        poll=poll,
-        quoted=quoted,
-    )
-
-
-def _extract_from_json(data: object) -> TweetData | None:
-    candidates = _deep_find(
-        data,
-        lambda d: any(k in d for k in ("full_text", "text"))
-        and any(k in d for k in ("created_at", "createdAt", "date")),
-    )
-    if not candidates:
-        return None
-
-    for cand in candidates:
-        return _tweet_from_dict(cand)
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    
     return None
 
+def extract_json_ld(soup: BeautifulSoup) -> Optional[dict]:
+    """Извлекает JSON-LD данные из HTML"""
+    script = soup.find('script', type='application/ld+json')
+    if script and script.string:
+        try:
+            return json.loads(script.string)
+        except json.JSONDecodeError:
+            pass
+    return None
 
-def _media_from_syndication(data: dict) -> list[MediaItem]:
-    items: list[MediaItem] = []
-    for entry in data.get("mediaDetails", []) or []:
-        url = entry.get("media_url_https") or entry.get("media_url") or entry.get("url")
-        media_type = entry.get("type") or "photo"
-        if url:
-            items.append(MediaItem(url=url, type=media_type))
+def extract_og_meta(soup: BeautifulSoup, property_name: str) -> Optional[str]:
+    """Извлекает Open Graph meta теги"""
+    tag = soup.find('meta', property=property_name)
+    if tag and tag.get('content'):
+        return tag['content']
+    return None
 
-    for url in data.get("photos", []) or []:
-        if url:
-            items.append(MediaItem(url=url, type="photo"))
-
-    video = data.get("video") or {}
-    variants = video.get("variants") or []
-    if variants:
-        url = variants[0].get("url")
-        if url:
-            items.append(MediaItem(url=url, type="video"))
-    return items
-
-
-def _tweet_from_syndication(data: dict, tweet_url: str) -> TweetData:
-    user = data.get("user") or {}
-    display = user.get("name") or data.get("name") or "—"
-    username = user.get("screen_name") or user.get("username") or data.get("screen_name") or "—"
-    text = data.get("full_text") or data.get("text") or data.get("quoted_text") or ""
-    created = data.get("created_at") or data.get("createdAt") or data.get("date")
-    created_at = _parse_datetime(created)
-
-    replies = data.get("reply_count") or data.get("replyCount")
-    reposts = data.get("retweet_count") or data.get("repost_count") or data.get("repostCount")
-    likes = data.get("favorite_count") or data.get("like_count") or data.get("likeCount")
-    views = data.get("view_count") or data.get("views")
-
-    quoted = None
-    quoted_raw = data.get("quoted_tweet") or data.get("quotedTweet") or data.get("quoted_status")
-    if isinstance(quoted_raw, dict):
-        quoted = _tweet_from_syndication(quoted_raw, tweet_url)
-
-    return TweetData(
-        display_name=str(display),
-        username=str(username).lstrip("@"),
-        tweet_url=tweet_url,
-        created_at=created_at,
-        text=text,
-        media=_media_from_syndication(data),
-        replies=str(replies) if replies is not None else None,
-        reposts=str(reposts) if reposts is not None else None,
-        likes=str(likes) if likes is not None else None,
-        views=str(views) if views is not None else None,
-        quoted=quoted,
-    )
-
-
-def parse_syndication_json(data: dict, tweet_url: str) -> TweetData:
-    return _tweet_from_syndication(data, tweet_url)
-
-
-def _extract_meta(soup: BeautifulSoup) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for meta in soup.find_all("meta"):
-        key = meta.get("property") or meta.get("name")
-        value = meta.get("content")
-        if key and value:
-            data[key] = value
-    return data
-
-
-def _parse_poll_from_html(soup: BeautifulSoup) -> PollData | None:
-    poll_box = soup.find(attrs={"data-testid": "poll"})
-    if not poll_box:
+def parse_poll_from_html(soup: BeautifulSoup) -> Optional[Poll]:
+    """Парсит опрос из HTML"""
+    # Ищем элементы опроса
+    poll_question = soup.find('div', class_=re.compile('poll-question|poll-title'))
+    poll_options = soup.find_all('div', class_=re.compile('poll-option|poll-choice'))
+    
+    if not poll_question or not poll_options:
         return None
-    question = poll_box.get_text(" ", strip=True)
+    
+    question = poll_question.get_text(strip=True)
     options = []
-    for option in poll_box.find_all("div"):
-        text = option.get_text(" ", strip=True)
+    total_votes = 0
+    
+    for option_div in poll_options:
+        text = option_div.find(class_=re.compile('option-text|choice-text'))
+        percent = option_div.find(class_=re.compile('option-percent|choice-percent'))
+        votes = option_div.find(class_=re.compile('option-votes|choice-votes'))
+        
         if text:
-            options.append(PollOption(text=text))
-    return PollData(question=question, options=options)
+            option_text = text.get_text(strip=True)
+            option_percent = 0.0
+            option_votes = 0
+            
+            if percent:
+                percent_text = percent.get_text(strip=True).replace('%', '')
+                try:
+                    option_percent = float(percent_text)
+                except ValueError:
+                    pass
+            
+            if votes:
+                option_votes = parse_number(votes.get_text(strip=True)) or 0
+                total_votes += option_votes
+            
+            options.append(PollOption(text=option_text, votes=option_votes, percent=option_percent))
+    
+    # Статус опроса
+    status_elem = soup.find(class_=re.compile('poll-status|poll-state'))
+    is_ended = False
+    time_left = None
+    
+    if status_elem:
+        status_text = status_elem.get_text(strip=True).lower()
+        is_ended = 'ended' in status_text or 'завершён' in status_text or 'closed' in status_text
+        if not is_ended and ('left' in status_text or 'осталось' in status_text):
+            time_left = status_text
+    
+    if options:
+        return Poll(
+            question=question,
+            options=options,
+            total_votes=total_votes,
+            is_ended=is_ended,
+            time_left=time_left
+        )
+    
+    return None
 
-
-def parse_tweet(html: str, tweet_url: str, include_quoted_media: bool = False) -> TweetData:
-    soup = BeautifulSoup(html, "lxml")
-
-    for obj in _find_json_objects(soup):
-        parsed = _extract_from_json(obj)
-        if parsed:
-            if not parsed.tweet_url:
-                parsed.tweet_url = tweet_url
-            lang = soup.html.get("lang") if soup.html else None
-            if lang:
-                parsed.source_language = lang
-            return parsed
-
-    meta = _extract_meta(soup)
-    title = meta.get("og:title") or meta.get("twitter:title") or "—"
-    description = meta.get("og:description") or meta.get("twitter:description") or ""
-    image = meta.get("og:image") or meta.get("twitter:image")
-
-    display_name = title.split("(")[0].strip() if title else "—"
-    username_match = re.search(r"@([A-Za-z0-9_]+)", title)
-    username = username_match.group(1) if username_match else "—"
-
-    created_at = _parse_datetime(meta.get("article:published_time") or meta.get("date"))
-    lang = meta.get("og:locale") or (soup.html.get("lang") if soup.html else None)
-
+def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
+    """Парсит HTML страницы твита"""
+    soup = BeautifulSoup(html, 'lxml')
+    
+    # Пробуем JSON-LD
+    json_ld = extract_json_ld(soup)
+    
+    # Извлекаем базовые данные
+    display_name = extract_og_meta(soup, 'og:title') or extract_og_meta(soup, 'twitter:title') or "Неизвестно"
+    
+    # Username из URL или meta
+    username_match = re.search(r'@(\w+)', display_name)
+    username = username_match.group(1) if username_match else extract_og_meta(soup, 'twitter:site')
+    if username and username.startswith('@'):
+        username = username[1:]
+    
+    # Текст твита
+    text = extract_og_meta(soup, 'og:description') or extract_og_meta(soup, 'twitter:description') or ""
+    
+    # Дата
+    date_str = extract_og_meta(soup, 'article:published_time')
+    date = parse_date(date_str) if date_str else datetime.now()
+    
+    # Медиа
     media = []
-    if image:
-        media.append(MediaItem(url=image, type="photo"))
-
-    poll = _parse_poll_from_html(soup)
-
-    return TweetData(
-        display_name=display_name,
-        username=username,
-        tweet_url=tweet_url,
-        created_at=created_at,
-        text=description,
+    
+    # Видео
+    video_url = extract_og_meta(soup, 'og:video') or extract_og_meta(soup, 'twitter:player:stream')
+    if video_url:
+        media.append(MediaItem(type='video', url=video_url))
+    
+    # Фото
+    image_url = extract_og_meta(soup, 'og:image') or extract_og_meta(soup, 'twitter:image')
+    if image_url and not video_url:  # Не добавляем превью видео как фото
+        media.append(MediaItem(type='photo', url=image_url))
+    
+    # Дополнительные фото из meta
+    for img_tag in soup.find_all('meta', property=re.compile('twitter:image:')):
+        img_url = img_tag.get('content')
+        if img_url and img_url not in [m.url for m in media]:
+            media.append(MediaItem(type='photo', url=img_url))
+    
+    # Статистика - парсим из текста или элементов
+    stats = TweetStats()
+    
+    stats_text = soup.find(class_=re.compile('stats|statistics|tweet-stats'))
+    if stats_text:
+        stats_str = stats_text.get_text()
+        
+        replies_match = re.search(r'(\d+[KMB]?)\s*(?:replies|ответ|комм)', stats_str, re.I)
+        if replies_match:
+            stats.replies = parse_number(replies_match.group(1))
+        
+        reposts_match = re.search(r'(\d+[KMB]?)\s*(?:repost|retweet|репост)', stats_str, re.I)
+        if reposts_match:
+            stats.reposts = parse_number(reposts_match.group(1))
+        
+        likes_match = re.search(r'(\d+[KMB]?)\s*(?:like|лайк)', stats_str, re.I)
+        if likes_match:
+            stats.likes = parse_number(likes_match.group(1))
+        
+        views_match = re.search(r'(\d+[KMB]?)\s*(?:view|просмотр)', stats_str, re.I)
+        if views_match:
+            stats.views = parse_number(views_match.group(1))
+    
+    # Опрос
+    poll = parse_poll_from_html(soup)
+    
+    # Quoted tweet (упрощённо)
+    quoted = None
+    quoted_div = soup.find(class_=re.compile('quoted-tweet|quote'))
+    if quoted_div:
+        quoted_author = quoted_div.find(class_=re.compile('author|name'))
+        quoted_text_elem = quoted_div.find(class_=re.compile('text|content'))
+        
+        if quoted_author and quoted_text_elem:
+            quoted_name = quoted_author.get_text(strip=True)
+            quoted_text = quoted_text_elem.get_text(strip=True)
+            quoted = QuotedTweet(
+                display_name=quoted_name,
+                username=quoted_name.split('@')[-1] if '@' in quoted_name else quoted_name,
+                url=original_url,
+                text=quoted_text
+            )
+    
+    # Перевод (если есть в HTML)
+    translated_text = None
+    source_language = None
+    
+    translation_div = soup.find(class_=re.compile('translation|translated'))
+    if translation_div:
+        translated_text = translation_div.get_text(strip=True)
+        
+        lang_elem = soup.find(class_=re.compile('source-lang|original-lang'))
+        if lang_elem:
+            source_language = lang_elem.get_text(strip=True)
+    
+    return Tweet(
+        display_name=display_name.split('(@')[0].strip() if '(@' in display_name else display_name,
+        username=username or "unknown",
+        url=original_url,
+        text=text,
+        date=date,
         media=media,
+        quoted_tweet=quoted,
+        stats=stats,
         poll=poll,
-        source_language=lang,
+        translated_text=translated_text,
+        source_language=source_language
     )

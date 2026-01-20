@@ -1,42 +1,53 @@
-﻿from dataclasses import dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
-
-
-@dataclass
-class MediaItem:
-    url: str
-    type: str  # "photo" or "video"
-
+from typing import Optional
 
 @dataclass
 class PollOption:
     text: str
-    percent: int | None = None
-    votes: int | None = None
-
+    votes: int = 0
+    percent: float = 0.0
 
 @dataclass
-class PollData:
+class Poll:
     question: str
-    options: list[PollOption] = field(default_factory=list)
-    total_votes: int | None = None
-    time_left: str | None = None
-    status: str | None = None
-
+    options: list[PollOption]
+    total_votes: int = 0
+    is_ended: bool = False
+    time_left: Optional[str] = None
 
 @dataclass
-class TweetData:
+class TweetStats:
+    replies: Optional[int] = None
+    reposts: Optional[int] = None
+    likes: Optional[int] = None
+    views: Optional[int] = None
+
+@dataclass
+class MediaItem:
+    type: str  # 'photo' или 'video'
+    url: str
+    thumbnail_url: Optional[str] = None
+
+@dataclass
+class QuotedTweet:
     display_name: str
     username: str
-    tweet_url: str
-    created_at: datetime | None
+    url: str
     text: str
+    date: Optional[datetime] = None
     media: list[MediaItem] = field(default_factory=list)
-    replies: str | None = None
-    reposts: str | None = None
-    likes: str | None = None
-    views: str | None = None
-    quoted: "TweetData | None" = None
-    poll: PollData | None = None
-    source_language: str | None = None
-    translated_text: str | None = None
+
+@dataclass
+class Tweet:
+    display_name: str
+    username: str
+    url: str
+    text: str
+    date: datetime
+    media: list[MediaItem] = field(default_factory=list)
+    quoted_tweet: Optional[QuotedTweet] = None
+    stats: TweetStats = field(default_factory=TweetStats)
+    poll: Optional[Poll] = None
+    translated_text: Optional[str] = None
+    source_language: Optional[str] = None

@@ -1,19 +1,31 @@
-﻿FROM python:3.12-slim
+FROM python:3.12-slim
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg libjpeg62-turbo \
-    && rm -rf /var/lib/apt/lists/*
+# Устанавливаем ffmpeg для сжатия видео (опционально)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 10001 appuser
+# Создаём не-root пользователя
+RUN useradd -m -u 1000 botuser && \
+    mkdir -p /tmp && \
+    chown -R botuser:botuser /tmp
+
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Копируем requirements
+COPY requirements.txt .
 
-COPY src /app/src
-RUN mkdir -p /app/data /tmp
+# Устанавливаем зависимости
+RUN pip install --no-cache-dir -r requirements.txt
 
-ENV PYTHONPATH=/app/src
-USER appuser
+# Копируем код
+COPY . .
 
-CMD ["python", "-m", "bot"]
+# Переключаемся на не-root пользователя
+USER botuser
+
+# Временная директория
+VOLUME ["/tmp"]
+
+# Запуск
+CMD ["python", "-m", "src.bot"]

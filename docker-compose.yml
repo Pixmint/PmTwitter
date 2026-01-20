@@ -1,11 +1,26 @@
-﻿services:
-  pmtwitter:
+version: '3.8'
+
+services:
+  pmt-bot:
     build: .
+    container_name: pmtwitter
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
-    tmpfs:
-      - /tmp
-    read_only: true
-    restart: unless-stopped
+      - tmp-data:/tmp
+    read_only: false  # Нужна запись в /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - pmt-network
+
+volumes:
+  tmp-data:
+    driver: local
+
+networks:
+  pmt-network:
+    driver: bridge

@@ -1,41 +1,37 @@
-﻿import re
-from dataclasses import dataclass
+import re
+from typing import Optional
 
-STATUS_RE = re.compile(
-    r"https?://(?P<host>[^/]+)/(?P<user>[^/]+)/status/(?P<id>\d+)",
-    re.IGNORECASE,
-)
+def extract_tweet_id(url: str) -> Optional[str]:
+    """Извлекает ID твита из URL"""
+    patterns = [
+        r'(?:twitter|x)\.com/[\w]+/status/(\d+)',
+        r'(?:fxtwitter|fixupx)\.com/[\w]+/status/(\d+)',
+        r'/status/(\d+)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
-SUPPORTED_HOSTS = {
-    "x.com",
-    "twitter.com",
-    "fxtwitter.com",
-    "fixupx.com",
-}
+def extract_username(url: str) -> Optional[str]:
+    """Извлекает username из URL"""
+    match = re.search(r'\.com/([\w]+)/status/', url)
+    if match:
+        return match.group(1)
+    return None
 
+def normalize_url(url: str) -> Optional[str]:
+    """Нормализует URL твита в стандартный формат x.com"""
+    tweet_id = extract_tweet_id(url)
+    username = extract_username(url)
+    
+    if tweet_id and username:
+        return f"https://x.com/{username}/status/{tweet_id}"
+    return None
 
-@dataclass
-class NormalizedUrl:
-    user: str
-    status_id: str
-    original_url: str
-    normalized_url: str
-
-
-def extract_status_urls(text: str) -> list[str]:
-    return [m.group(0) for m in STATUS_RE.finditer(text)]
-
-
-def normalize_status_url(url: str) -> NormalizedUrl | None:
-    match = STATUS_RE.search(url)
-    if not match:
-        return None
-
-    host = match.group("host").lower()
-    user = match.group("user")
-    status_id = match.group("id")
-    if host not in SUPPORTED_HOSTS:
-        return None
-
-    normalized = f"https://x.com/{user}/status/{status_id}"
-    return NormalizedUrl(user=user, status_id=status_id, original_url=url, normalized_url=normalized)
+def find_tweet_urls(text: str) -> list[str]:
+    """Находит все ссылки на твиты в тексте"""
+    pattern = r'https?://(?:(?:twitter|x|fxtwitter|fixupx)\.com/[\w]+/status/\d+)'
+    return re.findall(pattern, text)
