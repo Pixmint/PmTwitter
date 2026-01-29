@@ -170,6 +170,70 @@ async def send_tweet_card(
         # Удаляем временные файлы
         delete_files(temp_files)
 
+async def process_tweet_url(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    original_url: str,
+    thread_id: int = None,
+    user_comment: str = None
+):
+    """Обрабатывает одну ссылку на твит"""
+    normalized_url = normalize_url(original_url)
+    
+    if not normalized_url:
+        logger.warning(f"Не удалось нормализовать URL: {original_url}")
+        return False
+    
+    tweet_id = extract_tweet_id(normalized_url)
+    username = extract_username(normalized_url)
+    
+    if not tweet_id or not username:
+        logger.warning(f"Не удалось извлечь данные из URL: {normalized_url}")
+        return False
+    
+    # Проверяем настройку перевода
+    user_id = update.effective_user.id
+    lang_code = translate_settings.get_language(user_id)
+    
+    # Получаем данные твита
+    logger.info(f"Обработка твита: {tweet_id} (язык: {lang_code or 'нет'})")
+    
+    # Получаем HTML твита
+    html = await fetch_tweet_html(tweet_id, username, lang_code)
+    
+    if not html:
+        await update.message.reply_text(
+            f"❌ Твит недоступен (возможно приватный, удалён или 18+): {original_url}",
+            message_thread_id=thread_id
+        )
+        return False
+    
+    # Парсим твит
+    tweet = parse_tweet_html(html, normalized_url)
+    
+    if not tweet:
+        await update.message.reply_text(
+            f"❌ Не удалось распарсить твит: {original_url}",
+            message_thread_id=thread_id
+        )
+        return False
+    
+    # Если перевод не получен, но запрошен
+    if lang_code and not tweet.translated_text:
+        logger.info("Перевод не получен от источника")
+    
+    # Отправляем карточку
+    try:
+        await send_tweet_card(update, context, tweet, thread_id, user_comment)
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при отправке твита: {e}")
+        await update.message.reply_text(
+            f"❌ Ошибка при отправке: {str(e)[:100]}",
+            message_thread_id=thread_id
+        )
+        return False
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений"""
     
@@ -202,96 +266,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         thread_id = update.message.message_thread_id
         logger.info(f"Ответ в топик: {thread_id}")
     
-    # Извлекаем комментарий если есть текст перед ссылкой
+    # Извлекаем комментарий если есть текст перед первой ссылкой
     user_comment = None
-    message_text = update.message.text or ""
     first_url_pos = message_text.find(tweet_urls[0])
     if first_url_pos > 0:
         user_comment = message_text[:first_url_pos].strip()
+        # Убираем упоминание бота из комментария
+        bot_username = update.get_bot().username
+        user_comment = user_comment.replace(f"@{bot_username}", "").strip()
         if user_comment:
             logger.info(f"Найден комментарий пользователя: {user_comment[:50]}")
     
-    # Обрабатываем первую ссылку
-    original_url = tweet_urls[0]
-    normalized_url = normalize_url(original_url)
-    
-    if not normalized_url:
-        await update.message.reply_text(
-            "❌ Не удалось распознать ссылку на твит",
-            message_thread_id=thread_id
-        )
-        return
-    
-    tweet_id = extract_tweet_id(normalized_url)
-    username = extract_username(normalized_url)
-    
-    if not tweet_id or not username:
-        await update.message.reply_text(
-            "❌ Не удалось извлечь данные из ссылки",
-            message_thread_id=thread_id
-        )
-        return
-    
-    # Проверяем настройку перевода
-    lang_code = translate_settings.get_language(user_id)
-    
-    # Получаем данные твита
-    logger.info(f"Обработка твита: {tweet_id} (язык: {lang_code or 'нет'})")
-    
-    error_message = None
-    
-    # Получаем HTML твита
-    html = await fetch_tweet_html(tweet_id, username, lang_code)
-    
-    if not html:
-        error_message = await update.message.reply_text(
-            "❌ Твит недоступен (возможно приватный, удалён или 18+)",
-            message_thread_id=thread_id
-        )
-        return
-    
-    # Парсим твит
-    tweet = parse_tweet_html(html, normalized_url)
-    
-    if not tweet:
-        error_message = await update.message.reply_text(
-            "❌ Не удалось распарсить твит",
-            message_thread_id=thread_id
-        )
-        return
-    
-    # Если перевод не получен, но запрошен
-    if lang_code and not tweet.translated_text:
-        logger.info("Перевод не получен от источника")
-    
-    # Отправляем карточку
-    try:
-        await send_tweet_card(update, context, tweet, thread_id, user_comment)
+    # Обрабатываем все найденные ссылки
+    processed_count = 0
+    for idx, original_url in enumerate(tweet_urls):
+        # Комментарий только для первого твита
+        comment = user_comment if idx == 0 else None
         
-        # Если была ошибка но пост успешно отправлен - удаляем сообщение об ошибке
-        if error_message:
-            try:
-                await context.bot.delete_message(
-                    chat_id=error_message.chat_id,
-                    message_id=error_message.message_id
-                )
-                logger.info(f"Удалено сообщение об ошибке {error_message.message_id}")
-            except TelegramError as e:
-                logger.warning(f"Не удалось удалить сообщение об ошибке: {e}")
-    except Exception as e:
-        logger.error(f"Ошибка при отправке твита: {e}")
-        if not error_message:
-            error_message = await update.message.reply_text(
-                f"❌ Ошибка при отправке: {str(e)[:100]}",
-                message_thread_id=thread_id
-            )
-        return
+        success = await process_tweet_url(
+            update,
+            context,
+            original_url,
+            thread_id,
+            comment
+        )
+        
+        if success:
+            processed_count += 1
+    
+    logger.info(f"Обработано {processed_count} из {len(tweet_urls)} ссылок")
     
     # Удаляем исходное сообщение в группах если включена опция
     chat = update.effective_chat
     if (config.REMOVE_MESSAGE_IN_GROUPS and 
         chat.type in ["group", "supergroup"] and 
-        update.message.message_id):
+        update.message.message_id and
+        processed_count > 0):  # Только если хотя бы одна ссылка обработана
         try:
             await context.bot.delete_message(
                 chat_id=chat.id,

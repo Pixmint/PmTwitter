@@ -125,6 +125,22 @@ def parse_poll_from_html(soup: BeautifulSoup) -> Optional[Poll]:
     
     return None
 
+def is_video_thumbnail(url: str) -> bool:
+    """Проверяет, является ли URL превью для видео"""
+    if not url:
+        return False
+    
+    # Различные паттерны превью видео
+    video_thumb_patterns = [
+        'ext_tw_video_thumb',
+        'tweet_video_thumb',
+        'amplify_video_thumb',
+        '/tweet_video/',
+        '/ext_tw_video/'
+    ]
+    
+    return any(pattern in url for pattern in video_thumb_patterns)
+
 def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     """Парсит HTML страницы твита"""
     soup = BeautifulSoup(html, 'lxml')
@@ -137,22 +153,22 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     author_title = extract_og_meta(soup, 'og:title') or ""
     logger.debug(f"og:title: {author_title}")
     
-    # Парсим имя и username
-    display_name = author_title
-    username = "unknown"
+    # Парсим имя и username АВТОРА РЕТВИТА (из og:title)
+    retweet_display_name = author_title
+    retweet_username = "unknown"
     
     # Пытаемся извлечь username из разных мест
     if " (@" in author_title:
         parts = author_title.split(" (@")
-        display_name = parts[0].strip()
-        username = parts[1].rstrip(')').strip()
+        retweet_display_name = parts[0].strip()
+        retweet_username = parts[1].rstrip(')').strip()
     else:
-        # Из URL
+        # Из URL (это автор оригинального твита, но пока сохраним)
         username_match = re.search(r'x\.com/([^/]+)/status', original_url)
         if username_match:
-            username = username_match.group(1)
+            retweet_username = username_match.group(1)
     
-    logger.debug(f"Parsed: name={display_name}, username={username}")
+    logger.debug(f"Retweet author: name={retweet_display_name}, username={retweet_username}")
     
     # Текст твита из description
     text = extract_og_meta(soup, 'og:description') or extract_og_meta(soup, 'twitter:description') or ""
@@ -160,20 +176,23 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     
     # Проверяем если это ретвит/цитата (содержит "Quoting")
     quoted = None
+    original_author_username = None  # Автор оригинального твита
+    original_author_display = None
+    
     if "Quoting" in text:
         logger.debug(f"Detected quoting tweet")
         # Парсим quoted tweet из текста
-        # Формат: "текст" Quoting @username Quoted text
+        # Формат: "текст ретвита" Quoting Display Name (@username) \n "quoted text"
         quoting_pos = text.find("Quoting")
         
         if quoting_pos > 0:
-            # Текст до Quoting это текст основного твита
+            # Текст до Quoting это текст основного твита (ретвита)
             main_text = text[:quoting_pos].strip()
             
             # Текст после Quoting это информация о цитируемом твите
             quoting_text = text[quoting_pos + len("Quoting"):].strip()
             
-            # Парсим Quoting текст вида: "💜🌙 𝘾𝙖𝙩𝙣𝙖𝙥✨💜 (@username) \n "quoted text" \n extra text"
+            # Парсим Quoting текст вида: "Display Name (@username) \n "quoted text""
             lines = quoting_text.split('\n')
             
             quoted_author = None
@@ -183,17 +202,19 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
             logger.debug(f"Quoting text has {len(lines)} lines")
             
             if lines:
-                # Первая строка содержит имя и username
+                # Первая строка содержит имя и username ОРИГИНАЛЬНОГО АВТОРА
                 first_line = lines[0].strip()
-                logger.debug(f"First line of quoted: {first_line[:50]}")
-                # Ищем username в скобках
-                username_match = re.search(r'@([a-zA-Z0-9_]+)', first_line)
+                logger.debug(f"First line of quoted: {first_line[:100]}")
+                
+                # Ищем username в скобках - это автор ОРИГИНАЛЬНОГО твита
+                username_match = re.search(r'\(@([a-zA-Z0-9_]+)\)', first_line)
                 
                 if username_match:
-                    username = username_match.group(1)
-                    quoted_author = username
-                    quoted_display = first_line.replace(f"(@{username})", "").strip()
-                    logger.debug(f"Extracted quoted author: {username}")
+                    original_author_username = username_match.group(1)
+                    quoted_author = original_author_username
+                    # Display name - всё до (@username)
+                    quoted_display = re.sub(r'\s*\(@[a-zA-Z0-9_]+\)\s*', '', first_line).strip()
+                    logger.debug(f"Extracted original author: display={quoted_display}, username={original_author_username}")
                 else:
                     quoted_display = first_line
                     logger.debug(f"No username found in first line")
@@ -204,23 +225,21 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
                     if line and not line.startswith('http'):  # Пропускаем пустые и ссылки
                         quoted_content.append(line)
                 
-                logger.debug(f"Quoted content has {len(quoted_content)} lines, author={quoted_author}")
+                logger.debug(f"Quoted content has {len(quoted_content)} lines")
             
             if quoted_author and quoted_content:
                 quoted_text = " ".join(quoted_content)
                 quoted = QuotedTweet(
                     display_name=quoted_display or quoted_author,
                     username=quoted_author,
-                    url=original_url,  # Используем оригинальный URL
+                    url=f"https://x.com/{quoted_author}",  # Ссылка на профиль автора оригинального твита
                     text=quoted_text
                 )
                 logger.debug(f"Parsed quoted tweet: author={quoted_author}, text={quoted_text[:50]}")
-            
-            # НЕ заменяем текст - оставляем весь контент как есть, quoted будет отображён отдельно в цитате
     
     # Убираем prefix автора из текста если есть
-    if display_name and text.startswith(display_name):
-        text = text[len(display_name):].lstrip(': ')
+    if retweet_display_name and text.startswith(retweet_display_name):
+        text = text[len(retweet_display_name):].lstrip(': ')
     
     # Дата
     date_str = extract_og_meta(soup, 'article:published_time')
@@ -228,48 +247,67 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     
     # Медиа
     media = []
+    has_video = False
+    video_thumb_urls = set()  # Сохраняем URLs превью видео
     
     # Видео
     video_url = extract_og_meta(soup, 'og:video') or extract_og_meta(soup, 'twitter:player:stream')
     if video_url and not video_url.startswith('blob:'):
         logger.debug(f"Found video: {video_url}")
         media.append(MediaItem(type='video', url=video_url))
+        has_video = True
     
     # Фото (может быть мозаика или отдельное изображение)
     image_url = extract_og_meta(soup, 'og:image') or extract_og_meta(soup, 'twitter:image')
     if image_url:
-        # Пропускаем если это фото профиля (profile_images в URL)
+        # Пропускаем если это фото профиля
         if 'profile_images' in image_url:
             logger.debug(f"Skipping profile image: {image_url}")
+            image_url = None
+        # Если есть видео и это превью - сохраняем URL и пропускаем
+        elif has_video and is_video_thumbnail(image_url):
+            logger.debug(f"Skipping video thumbnail: {image_url}")
+            video_thumb_urls.add(image_url)
             image_url = None
         # Проверяем если это мозаика fxtwitter
         elif 'mosaic.fxtwitter.com' in image_url:
             logger.debug(f"Found mosaic image: {image_url}")
             # Парсим мозаику и создаем отдельные ссылки
-            # URL формата: https://mosaic.fxtwitter.com/jpeg/TWEET_ID/PHOTO_ID1/PHOTO_ID2/...
             parts = image_url.split('/')
             photo_ids = parts[5:]  # Все ID после tweet_id
             
             for photo_id in photo_ids:
-                if photo_id:  # Проверяем что не пусто
-                    # Создаем ссылку на оригинальное фото из Twitter
+                if photo_id:
                     twitter_photo_url = f"https://pbs.twimg.com/media/{photo_id}?format=jpg&name=orig"
                     media.append(MediaItem(type='photo', url=twitter_photo_url))
                     logger.debug(f"Added photo from mosaic: {photo_id}")
+            image_url = None
         elif image_url:
             # Обычное одиночное фото
             logger.debug(f"Found image: {image_url}")
             media.append(MediaItem(type='photo', url=image_url))
+            image_url = None
         
         # Дополнительные фото (только если нет видео)
-        if not video_url:
+        if not has_video:
             for i in range(1, 5):
                 img_url = extract_og_meta(soup, f'twitter:image:{i}') or extract_og_meta(soup, f'og:image:{i}')
                 if img_url and img_url not in [m.url for m in media]:
-                    logger.debug(f"Found additional image: {img_url}")
-                    media.append(MediaItem(type='photo', url=img_url))
+                    # Проверяем что это не превью и не профиль
+                    if not is_video_thumbnail(img_url) and 'profile_images' not in img_url:
+                        logger.debug(f"Found additional image: {img_url}")
+                        media.append(MediaItem(type='photo', url=img_url))
     
-    logger.debug(f"Total media items: {len(media)}")
+    # Если есть видео, проверяем дополнительные изображения и исключаем превью
+    if has_video:
+        for i in range(1, 5):
+            img_url = extract_og_meta(soup, f'twitter:image:{i}') or extract_og_meta(soup, f'og:image:{i}')
+            if img_url:
+                if is_video_thumbnail(img_url):
+                    video_thumb_urls.add(img_url)
+                    logger.debug(f"Found and skipping video thumbnail {i}: {img_url}")
+    
+    logger.debug(f"Total media items: {len(media)}, video thumbnails skipped: {len(video_thumb_urls)}")
     
     # Статистика - ищем в мета тегах или структурированных данных
     stats = TweetStats()
@@ -360,14 +398,15 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
         if lang_elem:
             source_language = lang_elem.get_text(strip=True)
     
+    # Возвращаем твит с правильными данными автора РЕТВИТА
     return Tweet(
-        display_name=display_name,
-        username=username,
+        display_name=retweet_display_name,  # Имя автора ретвита
+        username=retweet_username,  # Username автора ретвита
         url=original_url,
         text=text,
         date=date,
         media=media,
-        quoted_tweet=quoted,
+        quoted_tweet=quoted,  # Содержит данные оригинального автора
         stats=stats,
         poll=poll,
         translated_text=translated_text,

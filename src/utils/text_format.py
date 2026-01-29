@@ -3,6 +3,17 @@ from datetime import datetime
 from src.twitter.models import Tweet, Poll
 from html import escape
 
+def normalize_line_indents(text: str) -> str:
+    """Убирает ведущие пробелы/табуляции и пустые строки по краям"""
+    text = text.replace('\u00a0', ' ')
+    lines = text.split('\n')
+    lines = [re.sub(r'^[ \t]+', '', line) for line in lines]
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines)
+
 def clean_tweet_text(text: str) -> str:
     """Очищает текст твита от HTML тегов и форматирует его"""
     if not text:
@@ -10,6 +21,7 @@ def clean_tweet_text(text: str) -> str:
     
     # Сначала убираем HTML теги типа <br>, <br/>
     text = re.sub(r'<br\s*/?>', '\n', text)
+    text = normalize_line_indents(text)
     
     # Теперь экранируем HTML символы
     text = escape(text)
@@ -80,11 +92,14 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
         lines.append(f"<blockquote>{escape(user_comment)}</blockquote>")
         lines.append("")
     
-    # Первая строка: автор, username, дата
+    # Первая строка: автор РЕТВИТА, username РЕТВИТА, дата
     lines.append(
         f'{escape(tweet.display_name)} (<a href="https://x.com/{escape(tweet.username)}">@{escape(tweet.username)}</a>) — {date_str}, {time_str}'
     )
     lines.append("")
+    
+    # Флаг: был ли текст основного твита
+    has_main_text = False
     
     # Перевод (если есть)
     if include_translation and tweet.translated_text:
@@ -99,6 +114,7 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
             cleaned_text = clean_tweet_text(tweet.text)
             lines.append(cleaned_text)
             lines.append("")
+            has_main_text = True
     else:
         # Только оригинальный текст
         if tweet.text:
@@ -111,39 +127,49 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
             if text_to_display:  # Отправляем только если есть текст до Quoting
                 cleaned_text = clean_tweet_text(text_to_display)
                 lines.append(cleaned_text)
+                has_main_text = True
     
-    # Quoted tweet - blockquote
+    # Quoted tweet - blockquote (содержит данные ОРИГИНАЛЬНОГО автора)
     if tweet.quoted_tweet:
+        # Пустая строка перед цитатой ТОЛЬКО если был текст основного твита
+        if has_main_text:
+            lines.append("")
+        
         q = tweet.quoted_tweet
         q_date_str = ""
         if q.date:
             q_date, q_time = format_date(q.date)
             q_date_str = f" — {q_date}, {q_time}"
         
-        # Blockquote для quoted
+        # Blockquote для quoted с правильной ссылкой на профиль оригинального автора
         quoted_lines = []
-        quoted_lines.append(f'{escape(q.display_name)} (<a href="https://x.com/{escape(q.username)}">@{escape(q.username)}</a>){q_date_str}')
+        quoted_lines.append(
+            f'{escape(q.display_name)} (<a href="https://x.com/{escape(q.username)}">@{escape(q.username)}</a>){q_date_str}'
+        )
         
-        # Quoted текст внутри blockquote
+        # Quoted текст внутри blockquote - добавляем только если не пустой
         cleaned_q_text = clean_tweet_text(q.text)
-        quoted_lines.append(cleaned_q_text)
+        if cleaned_q_text.strip():  # Проверяем что текст не пустой
+            quoted_lines.append(cleaned_q_text)
         
         quoted_content = '\n'.join(quoted_lines)
         lines.append(f"<blockquote>{quoted_content}</blockquote>")
     else:
         # Если нет quoted_tweet объекта, ищем "Quoting" в тексте и оформляем как blockquote
         if "Quoting" in (tweet.text or ""):
+            # Пустая строка перед цитатой ТОЛЬКО если был текст основного твита
+            if has_main_text:
+                lines.append("")
+            
             # Находим позицию Quoting и берём текст после неё
             quoting_pos = tweet.text.find("Quoting")
             if quoting_pos >= 0:
                 quoting_text = tweet.text[quoting_pos + len("Quoting"):].strip()
                 if quoting_text:
-                    # Очищаем текст: убираем <br>, экранируем
-                    quoting_text = re.sub(r'<br\s*/?>', '\n', quoting_text)
-                    quoting_text = escape(quoting_text)
+                    quoting_text = clean_tweet_text(quoting_text)
                     lines.append(f"<blockquote>{quoting_text}</blockquote>")
     
-    lines.append("")  # Пустая строка перед статистикой
+    lines.append("")  # Пустая строка после контента
     
     # Опрос (если есть) - ДО статистики
     if tweet.poll:
