@@ -48,7 +48,8 @@ async def send_tweet_card(
     update: Update, 
     context: ContextTypes.DEFAULT_TYPE,
     tweet,
-    thread_id: int = None
+    thread_id: int = None,
+    user_comment: str = None
 ):
     """Отправляет карточку твита"""
     
@@ -58,7 +59,7 @@ async def send_tweet_card(
     include_translation = bool(tweet.translated_text)
     
     # Форматируем карточку
-    card_text = format_tweet_card(tweet, include_translation=include_translation)
+    card_text = format_tweet_card(tweet, include_translation=include_translation, user_comment=user_comment)
     
     temp_files = []
     
@@ -137,18 +138,15 @@ async def send_tweet_card(
             media_group = []
             
             for idx, (media_type, file_path) in enumerate(media_files):
-                with open(file_path, 'rb') as f:
-                    media_content = f.read()
-                
                 if media_type == "photo":
                     media_obj = InputMediaPhoto(
-                        media=media_content,
+                        media=open(file_path, 'rb'),
                         caption=caption if idx == 0 else None,
                         parse_mode=ParseMode.HTML if (idx == 0 and caption) else None
                     )
                 else:
                     media_obj = InputMediaVideo(
-                        media=media_content,
+                        media=open(file_path, 'rb'),
                         caption=caption if idx == 0 else None,
                         parse_mode=ParseMode.HTML if (idx == 0 and caption) else None
                     )
@@ -168,7 +166,6 @@ async def send_tweet_card(
             disable_web_page_preview=True,
             message_thread_id=thread_id
         )
-    
     finally:
         # Удаляем временные файлы
         delete_files(temp_files)
@@ -205,6 +202,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         thread_id = update.message.message_thread_id
         logger.info(f"Ответ в топик: {thread_id}")
     
+    # Извлекаем комментарий если есть текст перед ссылкой
+    user_comment = None
+    message_text = update.message.text or ""
+    first_url_pos = message_text.find(tweet_urls[0])
+    if first_url_pos > 0:
+        user_comment = message_text[:first_url_pos].strip()
+        if user_comment:
+            logger.info(f"Найден комментарий пользователя: {user_comment[:50]}")
+    
     # Обрабатываем первую ссылку
     original_url = tweet_urls[0]
     normalized_url = normalize_url(original_url)
@@ -229,13 +235,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем настройку перевода
     lang_code = translate_settings.get_language(user_id)
     
-    # Получаем HTML твита
+    # Получаем данные твита
     logger.info(f"Обработка твита: {tweet_id} (язык: {lang_code or 'нет'})")
     
+    error_message = None
+    
+    # Получаем HTML твита
     html = await fetch_tweet_html(tweet_id, username, lang_code)
     
     if not html:
-        await update.message.reply_text(
+        error_message = await update.message.reply_text(
             "❌ Твит недоступен (возможно приватный, удалён или 18+)",
             message_thread_id=thread_id
         )
@@ -245,7 +254,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tweet = parse_tweet_html(html, normalized_url)
     
     if not tweet:
-        await update.message.reply_text(
+        error_message = await update.message.reply_text(
             "❌ Не удалось распарсить твит",
             message_thread_id=thread_id
         )
@@ -256,4 +265,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Перевод не получен от источника")
     
     # Отправляем карточку
-    await send_tweet_card(update, context, tweet, thread_id)
+    try:
+        await send_tweet_card(update, context, tweet, thread_id, user_comment)
+        
+        # Если была ошибка но пост успешно отправлен - удаляем сообщение об ошибке
+        if error_message:
+            try:
+                await context.bot.delete_message(
+                    chat_id=error_message.chat_id,
+                    message_id=error_message.message_id
+                )
+                logger.info(f"Удалено сообщение об ошибке {error_message.message_id}")
+            except TelegramError as e:
+                logger.warning(f"Не удалось удалить сообщение об ошибке: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке твита: {e}")
+        if not error_message:
+            error_message = await update.message.reply_text(
+                f"❌ Ошибка при отправке: {str(e)[:100]}",
+                message_thread_id=thread_id
+            )
+        return
+    
+    # Удаляем исходное сообщение в группах если включена опция
+    chat = update.effective_chat
+    if (config.REMOVE_MESSAGE_IN_GROUPS and 
+        chat.type in ["group", "supergroup"] and 
+        update.message.message_id):
+        try:
+            await context.bot.delete_message(
+                chat_id=chat.id,
+                message_id=update.message.message_id
+            )
+            logger.info(f"Удалено сообщение {update.message.message_id} в группе {chat.id}")
+        except TelegramError as e:
+            logger.warning(f"Не удалось удалить сообщение: {e}")

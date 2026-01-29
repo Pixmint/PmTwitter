@@ -8,6 +8,7 @@ class Config:
     MODE: str = "polling"
     TELEGRAM_USER_IDS: Optional[list[int]] = None
     REPLY_IN_GROUPS: bool = False
+    REMOVE_MESSAGE_IN_GROUPS: bool = False
     COMPRESS_MEDIA: bool = True
     MAX_MEDIA_MB: int = 20
     FX_BASE_URL: str = "https://fxtwitter.com"
@@ -36,6 +37,7 @@ class Config:
             MODE=os.getenv("MODE", "polling"),
             TELEGRAM_USER_IDS=user_ids,
             REPLY_IN_GROUPS=os.getenv("REPLY_IN_GROUPS", "0") == "1",
+            REMOVE_MESSAGE_IN_GROUPS=os.getenv("REMOVE_MESSAGE_IN_GROUPS", "0") == "1",
             COMPRESS_MEDIA=os.getenv("COMPRESS_MEDIA", "1") == "1",
             MAX_MEDIA_MB=int(os.getenv("MAX_MEDIA_MB", "20")),
             FX_BASE_URL=os.getenv("FX_BASE_URL", "https://fxtwitter.com").rstrip('/'),

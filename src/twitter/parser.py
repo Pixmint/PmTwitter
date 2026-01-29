@@ -129,20 +129,98 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     """Парсит HTML страницы твита"""
     soup = BeautifulSoup(html, 'lxml')
     
-    # Пробуем JSON-LD
-    json_ld = extract_json_ld(soup)
+    # Debug: проверяем что пришло
+    title = soup.find('title')
+    logger.debug(f"HTML Title: {title.string if title else 'None'}")
     
-    # Извлекаем базовые данные
-    display_name = extract_og_meta(soup, 'og:title') or extract_og_meta(soup, 'twitter:title') or "Неизвестно"
+    # Извлекаем базовые данные из Open Graph
+    author_title = extract_og_meta(soup, 'og:title') or ""
+    logger.debug(f"og:title: {author_title}")
     
-    # Username из URL или meta
-    username_match = re.search(r'@(\w+)', display_name)
-    username = username_match.group(1) if username_match else extract_og_meta(soup, 'twitter:site')
-    if username and username.startswith('@'):
-        username = username[1:]
+    # Парсим имя и username
+    display_name = author_title
+    username = "unknown"
     
-    # Текст твита
+    # Пытаемся извлечь username из разных мест
+    if " (@" in author_title:
+        parts = author_title.split(" (@")
+        display_name = parts[0].strip()
+        username = parts[1].rstrip(')').strip()
+    else:
+        # Из URL
+        username_match = re.search(r'x\.com/([^/]+)/status', original_url)
+        if username_match:
+            username = username_match.group(1)
+    
+    logger.debug(f"Parsed: name={display_name}, username={username}")
+    
+    # Текст твита из description
     text = extract_og_meta(soup, 'og:description') or extract_og_meta(soup, 'twitter:description') or ""
+    logger.debug(f"Text length: {len(text)}")
+    
+    # Проверяем если это ретвит/цитата (содержит "Quoting")
+    quoted = None
+    if "Quoting" in text:
+        logger.debug(f"Detected quoting tweet")
+        # Парсим quoted tweet из текста
+        # Формат: "текст" Quoting @username Quoted text
+        quoting_pos = text.find("Quoting")
+        
+        if quoting_pos > 0:
+            # Текст до Quoting это текст основного твита
+            main_text = text[:quoting_pos].strip()
+            
+            # Текст после Quoting это информация о цитируемом твите
+            quoting_text = text[quoting_pos + len("Quoting"):].strip()
+            
+            # Парсим Quoting текст вида: "💜🌙 𝘾𝙖𝙩𝙣𝙖𝙥✨💜 (@username) \n "quoted text" \n extra text"
+            lines = quoting_text.split('\n')
+            
+            quoted_author = None
+            quoted_content = []
+            quoted_display = None
+            
+            logger.debug(f"Quoting text has {len(lines)} lines")
+            
+            if lines:
+                # Первая строка содержит имя и username
+                first_line = lines[0].strip()
+                logger.debug(f"First line of quoted: {first_line[:50]}")
+                # Ищем username в скобках
+                username_match = re.search(r'@([a-zA-Z0-9_]+)', first_line)
+                
+                if username_match:
+                    username = username_match.group(1)
+                    quoted_author = username
+                    quoted_display = first_line.replace(f"(@{username})", "").strip()
+                    logger.debug(f"Extracted quoted author: {username}")
+                else:
+                    quoted_display = first_line
+                    logger.debug(f"No username found in first line")
+                
+                # Остальные строки это quoted текст
+                for line in lines[1:]:
+                    line = line.strip()
+                    if line and not line.startswith('http'):  # Пропускаем пустые и ссылки
+                        quoted_content.append(line)
+                
+                logger.debug(f"Quoted content has {len(quoted_content)} lines, author={quoted_author}")
+            
+            if quoted_author and quoted_content:
+                quoted_text = " ".join(quoted_content)
+                quoted = QuotedTweet(
+                    display_name=quoted_display or quoted_author,
+                    username=quoted_author,
+                    url=original_url,  # Используем оригинальный URL
+                    text=quoted_text
+                )
+                logger.debug(f"Parsed quoted tweet: author={quoted_author}, text={quoted_text[:50]}")
+            
+            # НЕ заменяем текст - оставляем весь контент как есть, quoted будет отображён отдельно в цитате
+    
+    # Убираем prefix автора из текста если есть
+    if display_name and text.startswith(display_name):
+        text = text[len(display_name):].lstrip(': ')
     
     # Дата
     date_str = extract_og_meta(soup, 'article:published_time')
@@ -153,68 +231,128 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     
     # Видео
     video_url = extract_og_meta(soup, 'og:video') or extract_og_meta(soup, 'twitter:player:stream')
-    if video_url:
+    if video_url and not video_url.startswith('blob:'):
+        logger.debug(f"Found video: {video_url}")
         media.append(MediaItem(type='video', url=video_url))
     
-    # Фото
+    # Фото (может быть мозаика или отдельное изображение)
     image_url = extract_og_meta(soup, 'og:image') or extract_og_meta(soup, 'twitter:image')
-    if image_url and not video_url:  # Не добавляем превью видео как фото
-        media.append(MediaItem(type='photo', url=image_url))
+    if image_url:
+        # Пропускаем если это фото профиля (profile_images в URL)
+        if 'profile_images' in image_url:
+            logger.debug(f"Skipping profile image: {image_url}")
+            image_url = None
+        # Проверяем если это мозаика fxtwitter
+        elif 'mosaic.fxtwitter.com' in image_url:
+            logger.debug(f"Found mosaic image: {image_url}")
+            # Парсим мозаику и создаем отдельные ссылки
+            # URL формата: https://mosaic.fxtwitter.com/jpeg/TWEET_ID/PHOTO_ID1/PHOTO_ID2/...
+            parts = image_url.split('/')
+            photo_ids = parts[5:]  # Все ID после tweet_id
+            
+            for photo_id in photo_ids:
+                if photo_id:  # Проверяем что не пусто
+                    # Создаем ссылку на оригинальное фото из Twitter
+                    twitter_photo_url = f"https://pbs.twimg.com/media/{photo_id}?format=jpg&name=orig"
+                    media.append(MediaItem(type='photo', url=twitter_photo_url))
+                    logger.debug(f"Added photo from mosaic: {photo_id}")
+        elif image_url:
+            # Обычное одиночное фото
+            logger.debug(f"Found image: {image_url}")
+            media.append(MediaItem(type='photo', url=image_url))
+        
+        # Дополнительные фото (только если нет видео)
+        if not video_url:
+            for i in range(1, 5):
+                img_url = extract_og_meta(soup, f'twitter:image:{i}') or extract_og_meta(soup, f'og:image:{i}')
+                if img_url and img_url not in [m.url for m in media]:
+                    logger.debug(f"Found additional image: {img_url}")
+                    media.append(MediaItem(type='photo', url=img_url))
     
-    # Дополнительные фото из meta
-    for img_tag in soup.find_all('meta', property=re.compile('twitter:image:')):
-        img_url = img_tag.get('content')
-        if img_url and img_url not in [m.url for m in media]:
-            media.append(MediaItem(type='photo', url=img_url))
+    logger.debug(f"Total media items: {len(media)}")
     
-    # Статистика - парсим из текста или элементов
+    # Статистика - ищем в мета тегах или структурированных данных
     stats = TweetStats()
     
-    stats_text = soup.find(class_=re.compile('stats|statistics|tweet-stats'))
-    if stats_text:
-        stats_str = stats_text.get_text()
+    # Сначала пытаемся найти в owoembed ссылке
+    oembed_link = soup.find('link', rel='alternate', type='application/json+oembed')
+    logger.debug(f"oembed_link found: {oembed_link is not None}")
+    
+    if oembed_link:
+        oembed_url = oembed_link.get('href')
+        logger.debug(f"oembed_url: {oembed_url[:100] if oembed_url else 'None'}")
         
-        replies_match = re.search(r'(\d+[KMB]?)\s*(?:replies|ответ|комм)', stats_str, re.I)
-        if replies_match:
-            stats.replies = parse_number(replies_match.group(1))
-        
-        reposts_match = re.search(r'(\d+[KMB]?)\s*(?:repost|retweet|репост)', stats_str, re.I)
-        if reposts_match:
-            stats.reposts = parse_number(reposts_match.group(1))
-        
-        likes_match = re.search(r'(\d+[KMB]?)\s*(?:like|лайк)', stats_str, re.I)
-        if likes_match:
-            stats.likes = parse_number(likes_match.group(1))
-        
-        views_match = re.search(r'(\d+[KMB]?)\s*(?:view|просмотр)', stats_str, re.I)
-        if views_match:
-            stats.views = parse_number(views_match.group(1))
+        if oembed_url:
+            from urllib.parse import urlparse, parse_qs, unquote
+            parsed_url = urlparse(oembed_url)
+            params = parse_qs(parsed_url.query)
+            logger.debug(f"params keys: {list(params.keys())}")
+            
+            if 'text' in params:
+                stats_text = unquote(params['text'][0])
+                logger.debug(f"Found stats text: {stats_text}")
+                
+                # Парсим текст вида: "💬 239   🔁 23.0K   ❤️ 144.8K   👁️ 1.49M"
+                
+                # Replies (💬)
+                replies_match = re.search(r'💬\s+([\d.KMB]+)', stats_text)
+                if replies_match:
+                    stats.replies = parse_number(replies_match.group(1))
+                    logger.debug(f"Parsed replies: {stats.replies}")
+                
+                # Reposts (🔁)
+                reposts_match = re.search(r'🔁\s+([\d.KMB]+)', stats_text)
+                if reposts_match:
+                    stats.reposts = parse_number(reposts_match.group(1))
+                    logger.debug(f"Parsed reposts: {stats.reposts}")
+                
+                # Likes (❤️)
+                likes_match = re.search(r'❤️?\s+([\d.KMB]+)', stats_text)
+                if likes_match:
+                    stats.likes = parse_number(likes_match.group(1))
+                    logger.debug(f"Parsed likes: {stats.likes}")
+                
+                # Views (👁️)
+                views_match = re.search(r'👁️?\s+([\d.KMB]+)', stats_text)
+                if views_match:
+                    stats.views = parse_number(views_match.group(1))
+                    logger.debug(f"Parsed views: {stats.views}")
+    
+    # Пытаемся найти JSON-LD если owoembed не сработал
+    if stats.replies is None:
+        json_ld = extract_json_ld(soup)
+        if json_ld and isinstance(json_ld, dict):
+            interaction = json_ld.get('interactionStatistic', [])
+            if isinstance(interaction, list):
+                for stat in interaction:
+                    if isinstance(stat, dict):
+                        stat_type = stat.get('interactionType', '')
+                        value = stat.get('userInteractionCount')
+                        
+                        if 'Comment' in stat_type or 'Reply' in stat_type:
+                            stats.replies = parse_number(str(value))
+                        elif 'Share' in stat_type:
+                            stats.reposts = parse_number(str(value))
+                        elif 'Like' in stat_type:
+                            stats.likes = parse_number(str(value))
+    
+    logger.debug(f"Stats: replies={stats.replies}, reposts={stats.reposts}, likes={stats.likes}, views={stats.views}")
+    
+    # Views из мета тега (если есть)
+    views_meta = soup.find('meta', attrs={'name': 'twitter:views'})
+    if views_meta:
+        stats.views = parse_number(views_meta.get('content', ''))
     
     # Опрос
     poll = parse_poll_from_html(soup)
+    if poll:
+        logger.debug(f"Found poll with {len(poll.options)} options")
     
-    # Quoted tweet (упрощённо)
-    quoted = None
-    quoted_div = soup.find(class_=re.compile('quoted-tweet|quote'))
-    if quoted_div:
-        quoted_author = quoted_div.find(class_=re.compile('author|name'))
-        quoted_text_elem = quoted_div.find(class_=re.compile('text|content'))
-        
-        if quoted_author and quoted_text_elem:
-            quoted_name = quoted_author.get_text(strip=True)
-            quoted_text = quoted_text_elem.get_text(strip=True)
-            quoted = QuotedTweet(
-                display_name=quoted_name,
-                username=quoted_name.split('@')[-1] if '@' in quoted_name else quoted_name,
-                url=original_url,
-                text=quoted_text
-            )
-    
-    # Перевод (если есть в HTML)
+    # Перевод
     translated_text = None
     source_language = None
     
-    translation_div = soup.find(class_=re.compile('translation|translated'))
+    translation_div = soup.find('div', class_=re.compile('translation|translated'))
     if translation_div:
         translated_text = translation_div.get_text(strip=True)
         
@@ -223,8 +361,8 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
             source_language = lang_elem.get_text(strip=True)
     
     return Tweet(
-        display_name=display_name.split('(@')[0].strip() if '(@' in display_name else display_name,
-        username=username or "unknown",
+        display_name=display_name,
+        username=username,
         url=original_url,
         text=text,
         date=date,

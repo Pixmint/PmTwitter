@@ -1,6 +1,27 @@
+import re
 from datetime import datetime
 from src.twitter.models import Tweet, Poll
 from html import escape
+
+def clean_tweet_text(text: str) -> str:
+    """Очищает текст твита от HTML тегов и форматирует его"""
+    if not text:
+        return ""
+    
+    # Сначала убираем HTML теги типа <br>, <br/>
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    
+    # Теперь экранируем HTML символы
+    text = escape(text)
+    
+    # Заменяем @mention на ссылку на профиль (после экранирования)
+    def replace_mention(match):
+        username = match.group(1)
+        return f'<a href="https://x.com/{username}">@{username}</a>'
+    
+    text = re.sub(r'@([a-zA-Z0-9_]+)', replace_mention, text)
+    
+    return text
 
 def format_number(num: int) -> str:
     """Форматирует число с разделителями"""
@@ -49,31 +70,49 @@ def format_poll(poll: Poll) -> str:
     
     return "\n".join(lines)
 
-def format_tweet_card(tweet: Tweet, include_translation: bool = False) -> str:
+def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comment: str = None) -> str:
     """Форматирует карточку твита"""
     date_str, time_str = format_date(tweet.date)
     
+    # Комментарий пользователя если он есть
+    lines = []
+    if user_comment:
+        lines.append(f"<blockquote>{escape(user_comment)}</blockquote>")
+        lines.append("")
+    
     # Первая строка: автор, username, дата
-    lines = [
-        f'{escape(tweet.display_name)} (<a href="{tweet.url}">@{escape(tweet.username)}</a>) — {date_str}, {time_str}\n'
-    ]
+    lines.append(
+        f'{escape(tweet.display_name)} (<a href="https://x.com/{escape(tweet.username)}">@{escape(tweet.username)}</a>) — {date_str}, {time_str}'
+    )
+    lines.append("")
     
     # Перевод (если есть)
     if include_translation and tweet.translated_text:
         if tweet.source_language:
-            lines.append(f'<i>Переведено с {escape(tweet.source_language)}</i>\n')
-        lines.append(escape(tweet.translated_text) + "\n")
+            lines.append(f'<i>Переведено с {escape(tweet.source_language)}</i>')
+        lines.append(escape(tweet.translated_text))
+        lines.append("")
         
         # Оригинал ниже
         if tweet.text:
             lines.append(f'<i>Оригинал:</i>')
-            lines.append(escape(tweet.text) + "\n")
+            cleaned_text = clean_tweet_text(tweet.text)
+            lines.append(cleaned_text)
+            lines.append("")
     else:
         # Только оригинальный текст
         if tweet.text:
-            lines.append(escape(tweet.text) + "\n")
+            # Проверяем если есть "Quoting" - берём только текст ДО него
+            text_to_display = tweet.text
+            if "Quoting" in text_to_display:
+                quoting_pos = text_to_display.find("Quoting")
+                text_to_display = text_to_display[:quoting_pos].strip()
+            
+            if text_to_display:  # Отправляем только если есть текст до Quoting
+                cleaned_text = clean_tweet_text(text_to_display)
+                lines.append(cleaned_text)
     
-    # Quoted tweet
+    # Quoted tweet - blockquote
     if tweet.quoted_tweet:
         q = tweet.quoted_tweet
         q_date_str = ""
@@ -81,14 +120,30 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False) -> str:
             q_date, q_time = format_date(q.date)
             q_date_str = f" — {q_date}, {q_time}"
         
-        lines.append(
-            f'\n<b>Цитата {escape(q.display_name)} (<a href="{q.url}">@{escape(q.username)}</a>){q_date_str}:</b>'
-        )
+        # Blockquote для quoted
+        quoted_lines = []
+        quoted_lines.append(f'{escape(q.display_name)} (<a href="https://x.com/{escape(q.username)}">@{escape(q.username)}</a>){q_date_str}')
         
-        # Quoted текст с вертикальной чертой
-        for line in q.text.split('\n'):
-            lines.append(f"│ {escape(line)}")
-        lines.append("")
+        # Quoted текст внутри blockquote
+        cleaned_q_text = clean_tweet_text(q.text)
+        quoted_lines.append(cleaned_q_text)
+        
+        quoted_content = '\n'.join(quoted_lines)
+        lines.append(f"<blockquote>{quoted_content}</blockquote>")
+    else:
+        # Если нет quoted_tweet объекта, ищем "Quoting" в тексте и оформляем как blockquote
+        if "Quoting" in (tweet.text or ""):
+            # Находим позицию Quoting и берём текст после неё
+            quoting_pos = tweet.text.find("Quoting")
+            if quoting_pos >= 0:
+                quoting_text = tweet.text[quoting_pos + len("Quoting"):].strip()
+                if quoting_text:
+                    # Очищаем текст: убираем <br>, экранируем
+                    quoting_text = re.sub(r'<br\s*/?>', '\n', quoting_text)
+                    quoting_text = escape(quoting_text)
+                    lines.append(f"<blockquote>{quoting_text}</blockquote>")
+    
+    lines.append("")  # Пустая строка перед статистикой
     
     # Опрос (если есть) - ДО статистики
     if tweet.poll:
@@ -120,9 +175,10 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False) -> str:
         stats_parts.append("👁 —")
     
     lines.append("  ".join(stats_parts))
+    lines.append("")
     
     # Нижняя строка - ссылка на оригинал
-    lines.append(f'\n<i>Оригинал: <a href="{tweet.url}">открыть пост</a></i>')
+    lines.append(f'<i>Оригинал: <a href="{tweet.url}">открыть пост</a></i>')
     
     return "\n".join(lines)
 
