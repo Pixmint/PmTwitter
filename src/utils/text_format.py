@@ -86,6 +86,34 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
     """Форматирует карточку твита"""
     date_str, time_str = format_date(tweet.date)
     
+    def find_quoting_marker(text: str) -> tuple[int, int] | None:
+        markers = ["quoting", "цитируя", "цитирует"]
+        lowered = text.lower()
+        best_pos = None
+        best_len = None
+        for marker in markers:
+            pos = lowered.find(marker)
+            if pos >= 0 and (best_pos is None or pos < best_pos):
+                best_pos = pos
+                best_len = len(marker)
+        if best_pos is None:
+            return None
+        return best_pos, best_len
+
+    def extract_main_text(text: str) -> str:
+        marker = find_quoting_marker(text)
+        if marker:
+            quoting_pos, _ = marker
+            return text[:quoting_pos].strip()
+        return text.strip()
+
+    def strip_quoting_markers(text: str) -> str:
+        marker = find_quoting_marker(text)
+        if marker:
+            quoting_pos, _ = marker
+            return text[:quoting_pos].strip()
+        return text.strip()
+    
     # Комментарий пользователя если он есть
     lines = []
     if user_comment:
@@ -103,26 +131,17 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
     
     # Перевод (если есть)
     if include_translation and tweet.translated_text:
-        if tweet.source_language:
-            lines.append(f'<i>Переведено с {escape(tweet.source_language)}</i>')
-        lines.append(escape(tweet.translated_text))
-        lines.append("")
-        
-        # Оригинал ниже
-        if tweet.text:
-            lines.append(f'<i>Оригинал:</i>')
-            cleaned_text = clean_tweet_text(tweet.text)
-            lines.append(cleaned_text)
+        translated_text = strip_quoting_markers(tweet.translated_text)
+        if translated_text:
+            lines.append(escape(translated_text))
             lines.append("")
             has_main_text = True
+        
     else:
         # Только оригинальный текст
         if tweet.text:
             # Проверяем если есть "Quoting" - берём только текст ДО него
-            text_to_display = tweet.text
-            if "Quoting" in text_to_display:
-                quoting_pos = text_to_display.find("Quoting")
-                text_to_display = text_to_display[:quoting_pos].strip()
+            text_to_display = extract_main_text(tweet.text)
             
             if text_to_display:  # Отправляем только если есть текст до Quoting
                 cleaned_text = clean_tweet_text(text_to_display)
@@ -155,19 +174,19 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
         quoted_content = '\n'.join(quoted_lines)
         lines.append(f"<blockquote>{quoted_content}</blockquote>")
     else:
-        # Если нет quoted_tweet объекта, ищем "Quoting" в тексте и оформляем как blockquote
-        if "Quoting" in (tweet.text or ""):
+        # Если нет quoted_tweet объекта, ищем Quoting/Цитируя в тексте и оформляем как blockquote
+        marker = find_quoting_marker(tweet.text or "")
+        if marker:
             # Пустая строка перед цитатой ТОЛЬКО если был текст основного твита
             if has_main_text:
                 lines.append("")
             
-            # Находим позицию Quoting и берём текст после неё
-            quoting_pos = tweet.text.find("Quoting")
-            if quoting_pos >= 0:
-                quoting_text = tweet.text[quoting_pos + len("Quoting"):].strip()
-                if quoting_text:
-                    quoting_text = clean_tweet_text(quoting_text)
-                    lines.append(f"<blockquote>{quoting_text}</blockquote>")
+            # Находим позицию маркера и берём текст после него
+            quoting_pos, marker_len = marker
+            quoting_text = (tweet.text or "")[quoting_pos + marker_len:].strip()
+            if quoting_text:
+                quoting_text = clean_tweet_text(quoting_text)
+                lines.append(f"<blockquote>{quoting_text}</blockquote>")
     
     lines.append("")  # Пустая строка после контента
     
@@ -204,7 +223,11 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
     lines.append("")
     
     # Нижняя строка - ссылка на оригинал
-    lines.append(f'<i>Оригинал: <a href="{tweet.url}">открыть пост</a></i>')
+    original_line = f'<i>Оригинал: <a href="{tweet.url}">открыть пост</a>'
+    if include_translation and tweet.translated_text and tweet.source_language:
+        original_line += f' | Переведено с {escape(tweet.source_language)}'
+    original_line += '</i>'
+    lines.append(original_line)
     
     return "\n".join(lines)
 

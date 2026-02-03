@@ -16,6 +16,30 @@ from src.media.cleanup import delete_files
 
 logger = logging.getLogger(__name__)
 
+def get_reply_to_message_id(update: Update) -> int | None:
+    """Возвращает ID исходного сообщения для reply, если включено"""
+    if config.REPLY_TO_MESSAGE and update.message:
+        return update.message.message_id
+    return None
+
+async def send_text_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    thread_id: int = None,
+    **kwargs
+):
+    """Отправляет текст без reply, если настройка выключена"""
+    chat_id = update.effective_chat.id
+    reply_to_message_id = get_reply_to_message_id(update)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        message_thread_id=thread_id,
+        reply_to_message_id=reply_to_message_id,
+        **kwargs
+    )
+
 def should_reply_in_chat(update: Update) -> bool:
     """Определяет, нужно ли отвечать в этом чате"""
     message = update.message
@@ -66,11 +90,13 @@ async def send_tweet_card(
     try:
         # Если нет медиа - просто отправляем текст
         if not tweet.media:
-            await update.message.reply_text(
+            await send_text_message(
+                update,
+                context,
                 card_text,
+                thread_id=thread_id,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-                message_thread_id=thread_id
+                disable_web_page_preview=True
             )
             return
         
@@ -92,11 +118,13 @@ async def send_tweet_card(
         
         if not media_files:
             # Медиа не удалось скачать
-            await update.message.reply_text(
+            await send_text_message(
+                update,
+                context,
                 card_text + "\n\n⚠️ Не удалось загрузить медиа",
+                thread_id=thread_id,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-                message_thread_id=thread_id
+                disable_web_page_preview=True
             )
             return
         
@@ -105,11 +133,13 @@ async def send_tweet_card(
         
         # Если текст слишком длинный - отправляем отдельно
         if is_truncated or len(card_text) > 1024:
-            await update.message.reply_text(
+            await send_text_message(
+                update,
+                context,
                 card_text,
+                thread_id=thread_id,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-                message_thread_id=thread_id
+                disable_web_page_preview=True
             )
             caption = None
         
@@ -117,25 +147,31 @@ async def send_tweet_card(
         if len(media_files) == 1:
             # Одно медиа
             media_type, file_path = media_files[0]
+            reply_to_message_id = get_reply_to_message_id(update)
             
             with open(file_path, 'rb') as f:
                 if media_type == "photo":
-                    await update.message.reply_photo(
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
                         photo=f,
                         caption=caption,
                         parse_mode=ParseMode.HTML if caption else None,
-                        message_thread_id=thread_id
+                        message_thread_id=thread_id,
+                        reply_to_message_id=reply_to_message_id
                     )
                 else:
-                    await update.message.reply_video(
+                    await context.bot.send_video(
+                        chat_id=update.effective_chat.id,
                         video=f,
                         caption=caption,
                         parse_mode=ParseMode.HTML if caption else None,
-                        message_thread_id=thread_id
+                        message_thread_id=thread_id,
+                        reply_to_message_id=reply_to_message_id
                     )
         else:
             # Несколько медиа - альбом
             media_group = []
+            reply_to_message_id = get_reply_to_message_id(update)
             
             for idx, (media_type, file_path) in enumerate(media_files):
                 if media_type == "photo":
@@ -153,18 +189,22 @@ async def send_tweet_card(
                 
                 media_group.append(media_obj)
             
-            await update.message.reply_media_group(
+            await context.bot.send_media_group(
+                chat_id=update.effective_chat.id,
                 media=media_group,
-                message_thread_id=thread_id
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_message_id
             )
     
     except TelegramError as e:
         logger.error(f"Ошибка Telegram при отправке: {e}")
-        await update.message.reply_text(
+        await send_text_message(
+            update,
+            context,
             f"❌ Ошибка при отправке медиа: {e}\n\n{card_text}",
+            thread_id=thread_id,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-            message_thread_id=thread_id
+            disable_web_page_preview=True
         )
     finally:
         # Удаляем временные файлы
@@ -202,9 +242,11 @@ async def process_tweet_url(
     html = await fetch_tweet_html(tweet_id, username, lang_code)
     
     if not html:
-        await update.message.reply_text(
+        await send_text_message(
+            update,
+            context,
             f"❌ Твит недоступен (возможно приватный, удалён или 18+): {original_url}",
-            message_thread_id=thread_id
+            thread_id=thread_id
         )
         return False
     
@@ -212,9 +254,11 @@ async def process_tweet_url(
     tweet = parse_tweet_html(html, normalized_url)
     
     if not tweet:
-        await update.message.reply_text(
+        await send_text_message(
+            update,
+            context,
             f"❌ Не удалось распарсить твит: {original_url}",
-            message_thread_id=thread_id
+            thread_id=thread_id
         )
         return False
     
@@ -228,9 +272,11 @@ async def process_tweet_url(
         return True
     except Exception as e:
         logger.error(f"Ошибка при отправке твита: {e}")
-        await update.message.reply_text(
+        await send_text_message(
+            update,
+            context,
             f"❌ Ошибка при отправке: {str(e)[:100]}",
-            message_thread_id=thread_id
+            thread_id=thread_id
         )
         return False
 

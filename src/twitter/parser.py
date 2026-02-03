@@ -179,18 +179,28 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     original_author_username = None  # Автор оригинального твита
     original_author_display = None
     
-    if "Quoting" in text:
+    quote_markers = ["Quoting", "Цитируя", "Цитирует"]
+    lower_text = text.lower()
+    quote_pos = None
+    quote_marker = None
+    for marker in quote_markers:
+        pos = lower_text.find(marker.lower())
+        if pos >= 0 and (quote_pos is None or pos < quote_pos):
+            quote_pos = pos
+            quote_marker = marker
+    
+    if quote_marker is not None:
         logger.debug(f"Detected quoting tweet")
         # Парсим quoted tweet из текста
         # Формат: "текст ретвита" Quoting Display Name (@username) \n "quoted text"
-        quoting_pos = text.find("Quoting")
+        quoting_pos = quote_pos
         
-        if quoting_pos > 0:
+        if quoting_pos is not None and quoting_pos > 0:
             # Текст до Quoting это текст основного твита (ретвита)
             main_text = text[:quoting_pos].strip()
             
             # Текст после Quoting это информация о цитируемом твите
-            quoting_text = text[quoting_pos + len("Quoting"):].strip()
+            quoting_text = text[quoting_pos + len(quote_marker):].strip()
             
             # Парсим Quoting текст вида: "Display Name (@username) \n "quoted text""
             lines = quoting_text.split('\n')

@@ -17,6 +17,7 @@ class Config:
     LOG_LEVEL: str = "INFO"
     RATE_LIMIT_SECONDS: int = 5
     RATE_LIMIT_CHAT_SECONDS: int = 3
+    REPLY_TO_MESSAGE: bool = True
     
     @classmethod
     def from_env(cls):
@@ -44,6 +45,7 @@ class Config:
             INCLUDE_QUOTED_MEDIA=os.getenv("INCLUDE_QUOTED_MEDIA", "0") == "1",
             DEFAULT_TRANSLATE_LANG=os.getenv("DEFAULT_TRANSLATE_LANG", "off"),
             LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
+            REPLY_TO_MESSAGE=os.getenv("REPLY_TO_MESSAGE", "1") == "1",
         )
 
 config = Config.from_env()
