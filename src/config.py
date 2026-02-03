@@ -18,6 +18,8 @@ class Config:
     RATE_LIMIT_SECONDS: int = 5
     RATE_LIMIT_CHAT_SECONDS: int = 3
     REPLY_TO_MESSAGE: bool = True
+    CAPTION_ABOVE_MEDIA: bool = True
+    DUMP_TWEET_HTML: bool = False
     
     @classmethod
     def from_env(cls):
@@ -45,7 +47,11 @@ class Config:
             INCLUDE_QUOTED_MEDIA=os.getenv("INCLUDE_QUOTED_MEDIA", "0") == "1",
             DEFAULT_TRANSLATE_LANG=os.getenv("DEFAULT_TRANSLATE_LANG", "off"),
             LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
+            RATE_LIMIT_SECONDS=int(os.getenv("RATE_LIMIT_SECONDS", "5")),
+            RATE_LIMIT_CHAT_SECONDS=int(os.getenv("RATE_LIMIT_CHAT_SECONDS", "3")),
             REPLY_TO_MESSAGE=os.getenv("REPLY_TO_MESSAGE", "1") == "1",
+            CAPTION_ABOVE_MEDIA=os.getenv("CAPTION_ABOVE_MEDIA", "1") == "1",
+            DUMP_TWEET_HTML=os.getenv("DUMP_TWEET_HTML", "0") == "1",
         )
 
 config = Config.from_env()

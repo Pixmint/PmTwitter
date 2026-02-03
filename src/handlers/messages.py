@@ -157,7 +157,8 @@ async def send_tweet_card(
                         caption=caption,
                         parse_mode=ParseMode.HTML if caption else None,
                         message_thread_id=thread_id,
-                        reply_to_message_id=reply_to_message_id
+                        reply_to_message_id=reply_to_message_id,
+                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
                     )
                 else:
                     await context.bot.send_video(
@@ -166,7 +167,8 @@ async def send_tweet_card(
                         caption=caption,
                         parse_mode=ParseMode.HTML if caption else None,
                         message_thread_id=thread_id,
-                        reply_to_message_id=reply_to_message_id
+                        reply_to_message_id=reply_to_message_id,
+                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
                     )
         else:
             # Несколько медиа - альбом
@@ -178,13 +180,15 @@ async def send_tweet_card(
                     media_obj = InputMediaPhoto(
                         media=open(file_path, 'rb'),
                         caption=caption if idx == 0 else None,
-                        parse_mode=ParseMode.HTML if (idx == 0 and caption) else None
+                        parse_mode=ParseMode.HTML if (idx == 0 and caption) else None,
+                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
                     )
                 else:
                     media_obj = InputMediaVideo(
                         media=open(file_path, 'rb'),
                         caption=caption if idx == 0 else None,
-                        parse_mode=ParseMode.HTML if (idx == 0 and caption) else None
+                        parse_mode=ParseMode.HTML if (idx == 0 and caption) else None,
+                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
                     )
                 
                 media_group.append(media_obj)

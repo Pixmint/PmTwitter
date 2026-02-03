@@ -1,10 +1,12 @@
 import json
 import re
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 from bs4 import BeautifulSoup
 from src.twitter.models import Tweet, TweetStats, MediaItem, QuotedTweet, Poll, PollOption
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +145,17 @@ def is_video_thumbnail(url: str) -> bool:
 
 def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     """Парсит HTML страницы твита"""
+    if config.DUMP_TWEET_HTML:
+        tweet_id_match = re.search(r'/status/(\d+)', original_url)
+        tweet_id = tweet_id_match.group(1) if tweet_id_match else "unknown"
+        dump_path = f"/tmp/tweet_{tweet_id}.html"
+        try:
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            logger.info(f"HTML dump saved: {dump_path} (len={len(html)})")
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить HTML дамп: {e}")
+
     soup = BeautifulSoup(html, 'lxml')
     
     # Debug: проверяем что пришло
@@ -179,7 +192,7 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     original_author_username = None  # Автор оригинального твита
     original_author_display = None
     
-    quote_markers = ["Quoting", "Цитируя", "Цитирует"]
+    quote_markers = ["Quoting", "Цитируя", "Цитирует", "を引用"]
     lower_text = text.lower()
     quote_pos = None
     quote_marker = None
@@ -224,6 +237,7 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
                     quoted_author = original_author_username
                     # Display name - всё до (@username)
                     quoted_display = re.sub(r'\s*\(@[a-zA-Z0-9_]+\)\s*', '', first_line).strip()
+                    quoted_display = re.sub(r'\s*を引用\s*$', '', quoted_display).strip()
                     logger.debug(f"Extracted original author: display={quoted_display}, username={original_author_username}")
                 else:
                     quoted_display = first_line
@@ -402,11 +416,34 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     
     translation_div = soup.find('div', class_=re.compile('translation|translated'))
     if translation_div:
+        logger.debug("Translation block found in HTML")
         translated_text = translation_div.get_text(strip=True)
         
         lang_elem = soup.find(class_=re.compile('source-lang|original-lang'))
         if lang_elem:
             source_language = lang_elem.get_text(strip=True)
+            logger.debug(f"Source language detected: {source_language}")
+        else:
+            logger.debug("Source language element not found")
+    else:
+        logger.debug("Translation block not found in HTML")
+        # Fallback: пытаемся извлечь перевод из og:description
+        og_desc = extract_og_meta(soup, 'og:description') or ""
+        if og_desc:
+            desc_text = re.sub(r'<br\s*/?>', '\n', og_desc)
+            lines = [line.strip() for line in desc_text.split('\n') if line.strip()]
+            if lines and lines[0].startswith("📑 Переведено с "):
+                source_language = lines[0].replace("📑 Переведено с ", "").strip()
+                # Собираем перевод до строки "Цитируя/Quoting/を引用"
+                quote_markers = ["Цитируя", "Quoting", "を引用"]
+                translated_lines = []
+                for line in lines[1:]:
+                    if any(marker in line for marker in quote_markers):
+                        break
+                    translated_lines.append(line)
+                if translated_lines:
+                    translated_text = " ".join(translated_lines).strip()
+                    logger.debug("Translation extracted from og:description")
     
     # Возвращаем твит с правильными данными автора РЕТВИТА
     return Tweet(

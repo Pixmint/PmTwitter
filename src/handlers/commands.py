@@ -167,6 +167,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>Системные настройки:</b>
 • Ответы в группах: {"✅ Да" if config.REPLY_IN_GROUPS else "❌ Только при упоминании"}
 • Ответ реплаем: {"✅ Да" if config.REPLY_TO_MESSAGE else "❌ Нет"}
+• Подпись над медиа: {"✅ Да" if config.CAPTION_ABOVE_MEDIA else "❌ Нет (под медиа)"}
 • Сжатие медиа: {"✅ Включено" if config.COMPRESS_MEDIA else "❌ Выключено"}
 • Макс. размер медиа: {config.MAX_MEDIA_MB} МБ
 • Quoted медиа: {"✅ Показывать" if config.INCLUDE_QUOTED_MEDIA else "❌ Скрывать"}

@@ -87,7 +87,7 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
     date_str, time_str = format_date(tweet.date)
     
     def find_quoting_marker(text: str) -> tuple[int, int] | None:
-        markers = ["quoting", "цитируя", "цитирует"]
+        markers = ["quoting", "цитируя", "цитирует", "を引用"]
         lowered = text.lower()
         best_pos = None
         best_len = None
@@ -104,8 +104,30 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
         marker = find_quoting_marker(text)
         if marker:
             quoting_pos, _ = marker
-            return text[:quoting_pos].strip()
-        return text.strip()
+            main = text[:quoting_pos].strip()
+        else:
+            main = text.strip()
+        
+        # Если в конце "главного текста" торчит строка с автором — убираем её
+        if marker or tweet.quoted_tweet:
+            normalized = re.sub(r'<br\s*/?>', '\n', main)
+            lines = [line for line in normalized.split('\n') if line.strip() != ""]
+            if lines and is_author_only_line(lines[-1].strip()):
+                lines = lines[:-1]
+            main = "\n".join(lines).strip()
+        return main
+
+    def extract_author_line_from_main(text: str) -> str:
+        marker = find_quoting_marker(text)
+        if not marker:
+            return ""
+        quoting_pos, _ = marker
+        main = text[:quoting_pos].strip()
+        normalized = re.sub(r'<br\s*/?>', '\n', main)
+        lines = [line for line in normalized.split('\n') if line.strip() != ""]
+        if lines and is_author_only_line(lines[-1].strip()):
+            return lines[-1].strip()
+        return ""
 
     def strip_quoting_markers(text: str) -> str:
         marker = find_quoting_marker(text)
@@ -113,6 +135,17 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
             quoting_pos, _ = marker
             return text[:quoting_pos].strip()
         return text.strip()
+
+    def is_author_only_line(text: str) -> bool:
+        if not text:
+            return False
+        if f"@{tweet.username}" not in text:
+            return False
+        cleaned = text
+        cleaned = cleaned.replace(tweet.display_name, "")
+        cleaned = cleaned.replace(f"@{tweet.username}", "")
+        cleaned = re.sub(r'[\s\(\)\[\]\{\}«»"\'“”‘’|｜—–\-·•:]', '', cleaned)
+        return cleaned == ""
     
     # Комментарий пользователя если он есть
     lines = []
@@ -134,7 +167,6 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
         translated_text = strip_quoting_markers(tweet.translated_text)
         if translated_text:
             lines.append(escape(translated_text))
-            lines.append("")
             has_main_text = True
         
     else:
@@ -144,9 +176,14 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
             text_to_display = extract_main_text(tweet.text)
             
             if text_to_display:  # Отправляем только если есть текст до Quoting
+                has_quote_marker = find_quoting_marker(tweet.text or "") is not None
+                if (tweet.quoted_tweet or has_quote_marker) and is_author_only_line(text_to_display):
+                    text_to_display = ""
+                
                 cleaned_text = clean_tweet_text(text_to_display)
-                lines.append(cleaned_text)
-                has_main_text = True
+                if cleaned_text.strip():
+                    lines.append(cleaned_text)
+                    has_main_text = True
     
     # Quoted tweet - blockquote (содержит данные ОРИГИНАЛЬНОГО автора)
     if tweet.quoted_tweet:
@@ -185,8 +222,31 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
             quoting_pos, marker_len = marker
             quoting_text = (tweet.text or "")[quoting_pos + marker_len:].strip()
             if quoting_text:
-                quoting_text = clean_tweet_text(quoting_text)
-                lines.append(f"<blockquote>{quoting_text}</blockquote>")
+                # Если есть заголовок, оставляем его внутри цитаты
+                raw_lines = quoting_text.split("\n")
+                header = raw_lines[0].strip() if raw_lines else ""
+                body = "\n".join(raw_lines[1:]).strip() if len(raw_lines) > 1 else ""
+                if header:
+                    cleaned_header = clean_tweet_text(header)
+                    cleaned_body = clean_tweet_text(body)
+                    quoted_parts = []
+                    author_line = extract_author_line_from_main(tweet.text or "")
+                    if author_line and not is_author_only_line(header):
+                        quoted_parts.append(clean_tweet_text(author_line))
+                        quoted_parts.append("")
+                    quoted_parts.append(cleaned_header)
+                    if cleaned_body.strip():
+                        quoted_parts.append("")
+                        quoted_parts.append(cleaned_body)
+                    lines.append(f"<blockquote>{'\n'.join(quoted_parts)}</blockquote>")
+                else:
+                    quoting_text = clean_tweet_text(quoting_text)
+                    author_line = extract_author_line_from_main(tweet.text or "")
+                    if author_line:
+                        cleaned_author = clean_tweet_text(author_line)
+                        lines.append(f"<blockquote>{cleaned_author}\n{quoting_text}</blockquote>")
+                    else:
+                        lines.append(f"<blockquote>{quoting_text}</blockquote>")
     
     lines.append("")  # Пустая строка после контента
     
@@ -224,8 +284,11 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
     
     # Нижняя строка - ссылка на оригинал
     original_line = f'<i>Оригинал: <a href="{tweet.url}">открыть пост</a>'
+    
+    # Добавляем информацию о переводе в конец строки
     if include_translation and tweet.translated_text and tweet.source_language:
         original_line += f' | Переведено с {escape(tweet.source_language)}'
+    
     original_line += '</i>'
     lines.append(original_line)
     
