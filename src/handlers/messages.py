@@ -173,32 +173,41 @@ async def send_tweet_card(
         else:
             # Несколько медиа - альбом
             media_group = []
+            opened_files = []
             reply_to_message_id = get_reply_to_message_id(update)
             
-            for idx, (media_type, file_path) in enumerate(media_files):
-                if media_type == "photo":
-                    media_obj = InputMediaPhoto(
-                        media=open(file_path, 'rb'),
-                        caption=caption if idx == 0 else None,
-                        parse_mode=ParseMode.HTML if (idx == 0 and caption) else None,
-                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
-                    )
-                else:
-                    media_obj = InputMediaVideo(
-                        media=open(file_path, 'rb'),
-                        caption=caption if idx == 0 else None,
-                        parse_mode=ParseMode.HTML if (idx == 0 and caption) else None,
-                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
-                    )
+            try:
+                for idx, (media_type, file_path) in enumerate(media_files):
+                    f = open(file_path, 'rb')
+                    opened_files.append(f)
+                    
+                    if media_type == "photo":
+                        media_obj = InputMediaPhoto(
+                            media=f,
+                            caption=caption if idx == 0 else None,
+                            parse_mode=ParseMode.HTML if (idx == 0 and caption) else None,
+                            show_caption_above_media=config.CAPTION_ABOVE_MEDIA
+                        )
+                    else:
+                        media_obj = InputMediaVideo(
+                            media=f,
+                            caption=caption if idx == 0 else None,
+                            parse_mode=ParseMode.HTML if (idx == 0 and caption) else None,
+                            show_caption_above_media=config.CAPTION_ABOVE_MEDIA
+                        )
+                    
+                    media_group.append(media_obj)
                 
-                media_group.append(media_obj)
-            
-            await context.bot.send_media_group(
-                chat_id=update.effective_chat.id,
-                media=media_group,
-                message_thread_id=thread_id,
-                reply_to_message_id=reply_to_message_id
-            )
+                await context.bot.send_media_group(
+                    chat_id=update.effective_chat.id,
+                    media=media_group,
+                    message_thread_id=thread_id,
+                    reply_to_message_id=reply_to_message_id
+                )
+            finally:
+                # Закрываем все открытые файлы
+                for f in opened_files:
+                    f.close()
     
     except TelegramError as e:
         logger.error(f"Ошибка Telegram при отправке: {e}")

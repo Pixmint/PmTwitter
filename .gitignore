@@ -1,12 +1,30 @@
-# Environment
-.env
-venv/
-env/
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
 
 # IDE
 .vscode/
@@ -14,20 +32,34 @@ __pycache__/
 *.swp
 *.swo
 *~
+.DS_Store
 
-# Temporary files
+# Environment
+.env
+.env.local
+
+# Logs
 *.log
-/tmp/*
-translate_settings.json
 
-# Docker
-.dockerignore
-
-# Tests
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
 
-# OS
-.DS_Store
-Thumbs.db
+# Docker
+docker-compose.override.yml
+
+# Data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+# HTML dumps (debug)
+tweet_*.html
