@@ -33,6 +33,12 @@ env/
 *.swo
 *~
 .DS_Store
+*.code-workspace
+
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
 
 # Environment
 .env
@@ -46,9 +52,25 @@ env/
 .coverage
 htmlcov/
 .tox/
+*.cover
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
 
 # Docker
 docker-compose.override.yml
+.docker/
+
+# Media files (скачанные временные файлы)
+*.mp4
+*.mov
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.webm
 
 # Data
 data/
@@ -60,6 +82,7 @@ data/
 tmp/
 temp/
 *.tmp
+.cache/
 
 # HTML dumps (debug)
 tweet_*.html
