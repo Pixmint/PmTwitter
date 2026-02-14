@@ -162,28 +162,20 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
     # Флаг: был ли текст основного твита
     has_main_text = False
     
-    # Перевод (если есть)
-    if include_translation and tweet.translated_text:
-        translated_text = strip_quoting_markers(tweet.translated_text)
-        if translated_text:
-            lines.append(escape(translated_text))
-            has_main_text = True
+    # ВСЕГДА показываем оригинальный текст
+    if tweet.text:
+        # Проверяем если есть "Quoting" - берём только текст ДО него
+        text_to_display = extract_main_text(tweet.text)
         
-    else:
-        # Только оригинальный текст
-        if tweet.text:
-            # Проверяем если есть "Quoting" - берём только текст ДО него
-            text_to_display = extract_main_text(tweet.text)
+        if text_to_display:  # Отправляем только если есть текст до Quoting
+            has_quote_marker = find_quoting_marker(tweet.text or "") is not None
+            if (tweet.quoted_tweet or has_quote_marker) and is_author_only_line(text_to_display):
+                text_to_display = ""
             
-            if text_to_display:  # Отправляем только если есть текст до Quoting
-                has_quote_marker = find_quoting_marker(tweet.text or "") is not None
-                if (tweet.quoted_tweet or has_quote_marker) and is_author_only_line(text_to_display):
-                    text_to_display = ""
-                
-                cleaned_text = clean_tweet_text(text_to_display)
-                if cleaned_text.strip():
-                    lines.append(cleaned_text)
-                    has_main_text = True
+            cleaned_text = clean_tweet_text(text_to_display)
+            if cleaned_text.strip():
+                lines.append(cleaned_text)
+                has_main_text = True
     
     # Quoted tweet - blockquote (содержит данные ОРИГИНАЛЬНОГО автора)
     if tweet.quoted_tweet:

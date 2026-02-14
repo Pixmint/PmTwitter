@@ -82,9 +82,8 @@ async def send_tweet_card(
 ):
     """Отправляет карточку твита"""
     
-    # Проверяем перевод
-    user_id = update.effective_user.id
-    lang_code = translate_settings.get_language(user_id)
+    # Всегда показываем оригинальный текст
+    # Информацию о переводе добавим в конец карточки если есть
     include_translation = bool(tweet.translated_text)
     
     # Форматируем карточку
