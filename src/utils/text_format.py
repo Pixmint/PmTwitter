@@ -238,7 +238,8 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
                     if cleaned_body.strip():
                         quoted_parts.append("")
                         quoted_parts.append(cleaned_body)
-                    lines.append(f"<blockquote>{'\n'.join(quoted_parts)}</blockquote>")
+                    quoted_text = '\n'.join(quoted_parts)
+                    lines.append(f"<blockquote>{quoted_text}</blockquote>")
                 else:
                     quoting_text = clean_tweet_text(quoting_text)
                     author_line = extract_author_line_from_main(tweet.text or "")
@@ -280,17 +281,11 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
         stats_parts.append("👁 —")
     
     lines.append("  ".join(stats_parts))
-    lines.append("")
     
-    # Нижняя строка - ссылка на оригинал
-    original_line = f'<i>Оригинал: <a href="{tweet.url}">открыть пост</a>'
-    
-    # Добавляем информацию о переводе в конец строки
+    # Добавляем информацию о переводе если есть
     if include_translation and tweet.translated_text and tweet.source_language:
-        original_line += f' | Переведено с {escape(tweet.source_language)}'
-    
-    original_line += '</i>'
-    lines.append(original_line)
+        lines.append("")
+        lines.append(f'<i>Переведено с {escape(tweet.source_language)}</i>')
     
     return "\n".join(lines)
 

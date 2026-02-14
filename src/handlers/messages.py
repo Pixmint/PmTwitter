@@ -1,5 +1,5 @@
 import logging
-from telegram import Update, InputMediaPhoto, InputMediaVideo
+from telegram import Update, InputMediaPhoto, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -21,6 +21,11 @@ def get_reply_to_message_id(update: Update) -> int | None:
     if config.REPLY_TO_MESSAGE and update.message:
         return update.message.message_id
     return None
+
+def get_tweet_url_keyboard(tweet_url: str) -> InlineKeyboardMarkup:
+    """Создает клавиатуру с кнопкой ссылки на оригинальный твит"""
+    keyboard = [[InlineKeyboardButton("🔗 Открыть оригинал", url=tweet_url)]]
+    return InlineKeyboardMarkup(keyboard)
 
 async def send_text_message(
     update: Update,
@@ -96,7 +101,8 @@ async def send_tweet_card(
                 card_text,
                 thread_id=thread_id,
                 parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
+                disable_web_page_preview=True,
+                reply_markup=get_tweet_url_keyboard(tweet.url)
             )
             return
         
@@ -158,7 +164,8 @@ async def send_tweet_card(
                         parse_mode=ParseMode.HTML if caption else None,
                         message_thread_id=thread_id,
                         reply_to_message_id=reply_to_message_id,
-                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
+                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA,
+                        reply_markup=get_tweet_url_keyboard(tweet.url)
                     )
                 else:
                     await context.bot.send_video(
@@ -168,7 +175,8 @@ async def send_tweet_card(
                         parse_mode=ParseMode.HTML if caption else None,
                         message_thread_id=thread_id,
                         reply_to_message_id=reply_to_message_id,
-                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA
+                        show_caption_above_media=config.CAPTION_ABOVE_MEDIA,
+                        reply_markup=get_tweet_url_keyboard(tweet.url)
                     )
         else:
             # Несколько медиа - альбом
@@ -203,6 +211,14 @@ async def send_tweet_card(
                     media=media_group,
                     message_thread_id=thread_id,
                     reply_to_message_id=reply_to_message_id
+                )
+                
+                # Отправляем кнопку с ссылкой после альбома (media_group не поддерживает reply_markup)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="👆",
+                    message_thread_id=thread_id,
+                    reply_markup=get_tweet_url_keyboard(tweet.url)
                 )
             finally:
                 # Закрываем все открытые файлы
