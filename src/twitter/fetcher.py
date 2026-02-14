@@ -12,7 +12,7 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
-RETRY_STATUS_CODES = {408, 429}
+RETRY_STATUS_CODES = set(config.RETRY_STATUS_CODES)
 
 
 def _is_retry_status(status_code: int) -> bool:
@@ -21,8 +21,12 @@ def _is_retry_status(status_code: int) -> bool:
 
 @retry(
     reraise=True,
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    stop=stop_after_attempt(config.RETRY_MAX_ATTEMPTS),
+    wait=wait_exponential(
+        multiplier=config.RETRY_WAIT_MULTIPLIER,
+        min=config.RETRY_WAIT_MIN,
+        max=config.RETRY_WAIT_MAX,
+    ),
     retry=retry_if_exception_type((
         httpx.TimeoutException,
         httpx.RequestError,
