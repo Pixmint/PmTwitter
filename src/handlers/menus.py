@@ -100,7 +100,7 @@ def get_help_text() -> str:
 
 <b>Команды:</b>
 /start — главное меню
-/status — показать настройки"""
+/status — текущие настройки"""
 
 
 def get_help_keyboard() -> InlineKeyboardMarkup:
