@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 from src.twitter.models import Tweet, Poll
 from html import escape
+from typing import Optional
 
 def normalize_line_indents(text: str) -> str:
     """Убирает ведущие пробелы/табуляции и пустые строки по краям"""
@@ -43,7 +44,7 @@ def format_number(num: int) -> str:
         return f"{num / 1_000:.1f}K".replace('.0K', 'K')
     return str(num)
 
-def format_date(dt: datetime) -> str:
+def format_date(dt: datetime) -> tuple[str, str]:
     """Форматирует дату в формат DD.MM.YYYY, HH:MM"""
     return dt.strftime("%d.%m.%Y"), dt.strftime("%H:%M")
 
@@ -82,21 +83,21 @@ def format_poll(poll: Poll) -> str:
     
     return "\n".join(lines)
 
-def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comment: str = None) -> str:
+def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comment: Optional[str] = None) -> str:
     """Форматирует карточку твита"""
     date_str, time_str = format_date(tweet.date)
     
     def find_quoting_marker(text: str) -> tuple[int, int] | None:
         markers = ["quoting", "цитируя", "цитирует", "を引用"]
         lowered = text.lower()
-        best_pos = None
-        best_len = None
+        best_pos: Optional[int] = None
+        best_len: Optional[int] = None
         for marker in markers:
             pos = lowered.find(marker)
             if pos >= 0 and (best_pos is None or pos < best_pos):
                 best_pos = pos
                 best_len = len(marker)
-        if best_pos is None:
+        if best_pos is None or best_len is None:
             return None
         return best_pos, best_len
 
