@@ -238,7 +238,8 @@ def format_tweet_card(tweet: Tweet, include_translation: bool = False, user_comm
                     if cleaned_body.strip():
                         quoted_parts.append("")
                         quoted_parts.append(cleaned_body)
-                    lines.append(f"<blockquote>{'\n'.join(quoted_parts)}</blockquote>")
+                    quoted_text = '\n'.join(quoted_parts)
+                    lines.append(f"<blockquote>{quoted_text}</blockquote>")
                 else:
                     quoting_text = clean_tweet_text(quoting_text)
                     author_line = extract_author_line_from_main(tweet.text or "")
