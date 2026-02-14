@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 @dataclass
@@ -20,6 +20,11 @@ class Config:
     REPLY_TO_MESSAGE: bool = True
     CAPTION_ABOVE_MEDIA: bool = True
     DUMP_TWEET_HTML: bool = False
+    RETRY_MAX_ATTEMPTS: int = 3
+    RETRY_WAIT_MIN: float = 0.5
+    RETRY_WAIT_MAX: float = 4.0
+    RETRY_WAIT_MULTIPLIER: float = 0.5
+    RETRY_STATUS_CODES: list[int] = field(default_factory=lambda: [408, 429])
     
     @classmethod
     def from_env(cls):
@@ -34,6 +39,18 @@ class Config:
                 user_ids = [int(uid.strip()) for uid in user_ids_str.split(",") if uid.strip()]
             except ValueError:
                 print("Предупреждение: неверный формат TELEGRAM_USER_IDS")
+
+        retry_status_codes_str = os.getenv("RETRY_STATUS_CODES", "408,429")
+        retry_status_codes = []
+        if retry_status_codes_str:
+            for part in retry_status_codes_str.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    retry_status_codes.append(int(part))
+                except ValueError:
+                    print("Предупреждение: неверный формат RETRY_STATUS_CODES")
         
         return cls(
             BOT_TOKEN=bot_token,
@@ -52,6 +69,11 @@ class Config:
             REPLY_TO_MESSAGE=os.getenv("REPLY_TO_MESSAGE", "1") == "1",
             CAPTION_ABOVE_MEDIA=os.getenv("CAPTION_ABOVE_MEDIA", "1") == "1",
             DUMP_TWEET_HTML=os.getenv("DUMP_TWEET_HTML", "0") == "1",
+            RETRY_MAX_ATTEMPTS=int(os.getenv("RETRY_MAX_ATTEMPTS", "3")),
+            RETRY_WAIT_MIN=float(os.getenv("RETRY_WAIT_MIN", "0.5")),
+            RETRY_WAIT_MAX=float(os.getenv("RETRY_WAIT_MAX", "4.0")),
+            RETRY_WAIT_MULTIPLIER=float(os.getenv("RETRY_WAIT_MULTIPLIER", "0.5")),
+            RETRY_STATUS_CODES=retry_status_codes,
         )
 
 config = Config.from_env()
