@@ -10,6 +10,42 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
+TRANSLATION_HEADER_PATTERNS = (
+    r'^translated\s+from\s+(.+)$',
+    r'^переведено\s+с\s+(.+)$',
+    r'^перекладено\s+з\s+(.+)$',
+    r'^traducido\s+(?:de|del|desde)\s+(.+)$',
+    r'^traduit\s+(?:de|du|des|depuis)\s+(.+)$',
+    r'^übersetzt\s+aus\s+(.+)$',
+    r'^tradotto\s+(?:da|dal|dalla|dai|dagli|dalle|dall\')\s+(.+)$',
+    r'^traduzido\s+(?:de|do|da|dos|das)\s+(.+)$',
+)
+QUOTE_MARKERS_LOWER = ("quoting", "цитируя", "цитирует", "を引用")
+TRANSLATION_HINT_WORDS = (
+    "translated",
+    "перевед",
+    "переклад",
+    "traduit",
+    "traduc",
+    "tradotto",
+    "traduz",
+    "übersetzt",
+)
+SOURCE_LANGUAGE_SEPARATORS = (
+    " from ",
+    " с ",
+    " з ",
+    " de ",
+    " del ",
+    " du ",
+    " des ",
+    " desde ",
+    " depuis ",
+    " da ",
+    " do ",
+    " aus ",
+)
+
 def parse_number(text: Optional[str]) -> Optional[int]:
     """Парсит число из текста (поддерживает K, M)"""
     if not text:
@@ -143,6 +179,67 @@ def is_video_thumbnail(url: str) -> bool:
     
     return any(pattern in url for pattern in video_thumb_patterns)
 
+def normalize_text_breaks(text: str) -> str:
+    """Нормализует переносы строк в тексте твита."""
+    if not text:
+        return ""
+
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = text.replace('\\n', '\n')
+    return text
+
+def extract_source_language_from_header(line: str) -> Optional[str]:
+    """Пытается извлечь язык из строки вида '📑 Translated from ...'."""
+    cleaned = line.strip().replace('\u00a0', ' ')
+    cleaned = cleaned.replace('’', "'").replace('`', "'")
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    has_icon = cleaned.startswith("📑")
+    if has_icon:
+        cleaned = cleaned[1:].strip()
+
+    for pattern in TRANSLATION_HEADER_PATTERNS:
+        match = re.match(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" .:;,-")
+
+    lowered = cleaned.lower()
+    if not has_icon and not any(hint in lowered for hint in TRANSLATION_HINT_WORDS):
+        return None
+
+    for separator in SOURCE_LANGUAGE_SEPARATORS:
+        idx = lowered.rfind(separator)
+        if idx >= 0:
+            candidate = cleaned[idx + len(separator):].strip(" .:;,-")
+            if candidate:
+                return candidate
+    return None
+
+def trim_empty_edges(lines: list[str]) -> list[str]:
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+def strip_leading_translation_header(text: str) -> tuple[str, Optional[str]]:
+    """Удаляет первую служебную строку про перевод и возвращает язык, если нашли."""
+    normalized = normalize_text_breaks(text)
+    lines = normalized.split('\n')
+    first_non_empty = next((idx for idx, line in enumerate(lines) if line.strip()), None)
+    if first_non_empty is None:
+        return "", None
+
+    header_line = lines[first_non_empty].strip()
+    source_language = extract_source_language_from_header(header_line)
+    is_translation_header = header_line.startswith("📑") or source_language is not None
+    if not is_translation_header:
+        return normalized, None
+
+    content_lines = lines[first_non_empty + 1:]
+    content_lines = trim_empty_edges(content_lines)
+    return "\n".join(content_lines), source_language
+
 def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     """Парсит HTML страницы твита"""
     if config.DUMP_TWEET_HTML:
@@ -185,6 +282,8 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     
     # Текст твита из description
     text = extract_og_meta(soup, 'og:description') or extract_og_meta(soup, 'twitter:description') or ""
+    # Иногда в og:description первым идёт служебная строка "📑 ...", убираем её.
+    text, source_language_from_text = strip_leading_translation_header(text)
     logger.debug(f"Text length: {len(text)}")
     
     # Проверяем если это ретвит/цитата (содержит "Quoting")
@@ -264,6 +363,9 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     # Убираем prefix автора из текста если есть
     if retweet_display_name and text.startswith(retweet_display_name):
         text = text[len(retweet_display_name):].lstrip(': ')
+        text, extracted_from_prefixed_text = strip_leading_translation_header(text)
+        if not source_language_from_text and extracted_from_prefixed_text:
+            source_language_from_text = extracted_from_prefixed_text
     
     # Дата
     date_str = extract_og_meta(soup, 'article:published_time')
@@ -417,33 +519,43 @@ def parse_tweet_html(html: str, original_url: str) -> Optional[Tweet]:
     translation_div = soup.find('div', class_=re.compile('translation|translated'))
     if translation_div:
         logger.debug("Translation block found in HTML")
-        translated_text = translation_div.get_text(strip=True)
+        raw_text = translation_div.get_text(separator='\n', strip=True)
+        raw_text, extracted_source_language = strip_leading_translation_header(raw_text)
+        translated_text = raw_text or None
         
         lang_elem = soup.find(class_=re.compile('source-lang|original-lang'))
         if lang_elem:
             source_language = lang_elem.get_text(strip=True)
             logger.debug(f"Source language detected: {source_language}")
+        elif extracted_source_language:
+            source_language = extracted_source_language
+            logger.debug(f"Source language detected from translation header: {source_language}")
         else:
             logger.debug("Source language element not found")
     else:
         logger.debug("Translation block not found in HTML")
-        # Fallback: пытаемся извлечь перевод из og:description
+        # Fallback: пытаемся извлечь перевод из og:description с любым языком заголовка
         og_desc = extract_og_meta(soup, 'og:description') or ""
         if og_desc:
-            desc_text = re.sub(r'<br\s*/?>', '\n', og_desc)
-            lines = [line.strip() for line in desc_text.split('\n') if line.strip()]
-            if lines and lines[0].startswith("📑 Переведено с "):
-                source_language = lines[0].replace("📑 Переведено с ", "").strip()
-                # Собираем перевод до строки "Цитируя/Quoting/を引用"
-                quote_markers = ["Цитируя", "Quoting", "を引用"]
+            normalized_desc = normalize_text_breaks(og_desc)
+            desc_text, extracted_source_language = strip_leading_translation_header(normalized_desc)
+            if extracted_source_language or desc_text != normalized_desc:
+                if extracted_source_language:
+                    source_language = extracted_source_language
+
                 translated_lines = []
-                for line in lines[1:]:
-                    if any(marker in line for marker in quote_markers):
+                for line in desc_text.split('\n'):
+                    if any(marker in line.lower() for marker in QUOTE_MARKERS_LOWER):
                         break
-                    translated_lines.append(line)
+                    translated_lines.append(line.rstrip())
+
+                translated_lines = trim_empty_edges(translated_lines)
                 if translated_lines:
-                    translated_text = " ".join(translated_lines).strip()
+                    translated_text = "\n".join(translated_lines).strip()
                     logger.debug("Translation extracted from og:description")
+
+    if not source_language and source_language_from_text:
+        source_language = source_language_from_text
     
     # Возвращаем твит с правильными данными автора РЕТВИТА
     return Tweet(
