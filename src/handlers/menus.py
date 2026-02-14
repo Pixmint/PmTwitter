@@ -5,6 +5,26 @@ from src.twitter.translate import SUPPORTED_LANGUAGES
 from src.config import config
 
 
+# ==================== Эмодзи флагов для языков ====================
+LANGUAGE_FLAGS = {
+    "ru": "🇷🇺",
+    "en": "🇬🇧",
+    "uk": "🇺🇦",
+    "es": "🇪🇸",
+    "fr": "🇫🇷",
+    "de": "🇩🇪",
+    "it": "🇮🇹",
+    "pt": "🇵🇹",
+    "ja": "🇯🇵",
+    "ko": "🇰🇷",
+    "zh": "🇨🇳",
+    "ar": "🇸🇦",
+    "tr": "🇹🇷",
+    "pl": "🇵🇱",
+    "nl": "🇳🇱",
+}
+
+
 # ==================== Callback Data ====================
 # Формат: action:param или просто action
 
@@ -123,9 +143,10 @@ def get_translate_keyboard(current_lang: Optional[str] = None) -> InlineKeyboard
     for i in range(0, len(priority_langs), 2):
         row = []
         for code in priority_langs[i:i+2]:
+            flag = LANGUAGE_FLAGS.get(code, "")
             name = SUPPORTED_LANGUAGES[code]
             # Добавляем ✅ к текущему языку
-            button_text = f"✅ {name}" if code == current_lang else name
+            button_text = f"✅ {flag} {name}" if code == current_lang else f"{flag} {name}"
             row.append(InlineKeyboardButton(button_text, callback_data=f"{CALLBACK_TRANSLATE_LANG}{code}"))
         keyboard.append(row)
     
@@ -133,8 +154,9 @@ def get_translate_keyboard(current_lang: Optional[str] = None) -> InlineKeyboard
     for i in range(0, len(other_langs), 2):
         row = []
         for code in other_langs[i:i+2]:
+            flag = LANGUAGE_FLAGS.get(code, "")
             name = SUPPORTED_LANGUAGES[code]
-            button_text = f"✅ {name}" if code == current_lang else name
+            button_text = f"✅ {flag} {name}" if code == current_lang else f"{flag} {name}"
             row.append(InlineKeyboardButton(button_text, callback_data=f"{CALLBACK_TRANSLATE_LANG}{code}"))
         keyboard.append(row)
     
