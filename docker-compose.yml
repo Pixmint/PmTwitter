@@ -6,8 +6,10 @@ services:
     env_file:
       - .env
     volumes:
-      - tmp-data:/tmp
-    read_only: false  # Нужна запись в /tmp
+      - data:/app/data
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    read_only: true
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -16,7 +18,7 @@ services:
       - pmt-network
 
 volumes:
-  tmp-data:
+  data:
     driver: local
 
 networks:

@@ -7,8 +7,8 @@ RUN apt-get update && \
 
 # Создаём не-root пользователя
 RUN useradd -m -u 1000 botuser && \
-    mkdir -p /tmp && \
-    chown -R botuser:botuser /tmp
+    mkdir -p /tmp /app/data && \
+    chown -R botuser:botuser /tmp /app/data
 
 WORKDIR /app
 
@@ -24,8 +24,8 @@ COPY . .
 # Переключаемся на не-root пользователя
 USER botuser
 
-# Временная директория
-VOLUME ["/tmp"]
+# Временная директория и постоянные данные
+VOLUME ["/tmp", "/app/data"]
 
 # Запуск
 CMD ["python", "-m", "src.bot"]
