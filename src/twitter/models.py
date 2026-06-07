@@ -2,11 +2,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+
 @dataclass
 class PollOption:
     text: str
     votes: int = 0
     percent: float = 0.0
+
 
 @dataclass
 class Poll:
@@ -16,6 +18,7 @@ class Poll:
     is_ended: bool = False
     time_left: Optional[str] = None
 
+
 @dataclass
 class TweetStats:
     replies: Optional[int] = None
@@ -23,11 +26,13 @@ class TweetStats:
     likes: Optional[int] = None
     views: Optional[int] = None
 
+
 @dataclass
 class MediaItem:
     type: str  # 'photo' или 'video'
     url: str
     thumbnail_url: Optional[str] = None
+
 
 @dataclass
 class QuotedTweet:
@@ -37,6 +42,7 @@ class QuotedTweet:
     text: str
     date: Optional[datetime] = None
     media: list[MediaItem] = field(default_factory=list)
+
 
 @dataclass
 class Tweet:

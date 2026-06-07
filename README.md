@@ -60,7 +60,7 @@ sudo apt install ffmpeg
 # Экспорт токена
 export BOT_TOKEN="your_token_here"
 
-# Запуск
+# Запуск (.env теперь загружается автоматически)
 python -m src.bot
 ```
 
@@ -99,6 +99,7 @@ FX_BASE_URL=https://fxtwitter.com  # Альтернативный фронтен
 
 # Перевод
 DEFAULT_TRANSLATE_LANG=off     # off, ru, en, es, fr, de, it, pt, ja, ko, zh и т.д.
+TRANSLATE_SETTINGS_PATH=/app/data/translate_settings.json  # Постоянное хранилище настроек
 
 # Отладка
 LOG_LEVEL=INFO                 # DEBUG, INFO, WARNING, ERROR
@@ -193,7 +194,7 @@ Workflow запускается автоматически при каждом p
 ## 🔒 Безопасность
 
 - ✅ Non-root пользователь в Docker
-- ✅ Read-only filesystem (кроме /tmp)
+- ✅ Read-only filesystem + tmpfs для `/tmp` и volume для `/app/data`
 - ✅ Drop всех capabilities
 - ✅ No new privileges
 - ✅ Whitelist по Telegram ID
